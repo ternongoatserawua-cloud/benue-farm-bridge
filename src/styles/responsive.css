@@ -1,0 +1,37 @@
+/* ==========================================================================
+   RESPONSIVE UTILITIES & MOBILE-FIRST ADJUSTMENTS
+   ========================================================================== */
+
+/* Mobile Bottom Navigation padding for main content */
+@media (max-width: 768px) {
+  .main-content {
+    padding-bottom: calc(var(--bottom-nav-height) + var(--space-8));
+    overflow-x: hidden;
+  }
+  
+  .hide-mobile {
+    display: none !important;
+  }
+}
+
+@media (min-width: 769px) {
+  .hide-desktop {
+    display: none !important;
+  }
+}
+
+/* Animations */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}

@@ -1,0 +1,211 @@
+/* ==========================================================================
+   BENUE MARKET DESIGN TOKENS & ARCHITECTURE SYSTEM
+   Discipline: Strict 4px/8px Grid, Rich Color Palette, Dark Mode & WCAG AA
+   ========================================================================== */
+
+:root {
+  /* ------------------------------------------------------------------------
+     1. RESTRICTED SEMANTIC COLOR PALETTE (Max 2 Brand Colors + Neutrals)
+     ------------------------------------------------------------------------ */
+  /* Primary Brand: Deep Benue Earth Green */
+  --color-primary-50: #f0fdf4;
+  --color-primary-100: #dcfce7;
+  --color-primary-200: #bbf7d0;
+  --color-primary-300: #86efac;
+  --color-primary-400: #4ade80;
+  --color-primary-500: #22c55e;
+  --color-primary-600: #16a34a;
+  --color-primary-700: #15803d; /* Core Brand Primary: AA compliant on white */
+  --color-primary-800: #166534;
+  --color-primary-900: #14532d;
+  --color-primary-950: #052e16;
+
+  /* Secondary Accent: Benue Harvest Ochre / Amber */
+  --color-accent-50: #fffbeb;
+  --color-accent-100: #fef3c7;
+  --color-accent-200: #fde68a;
+  --color-accent-500: #f59e0b;
+  --color-accent-600: #d97706;
+  --color-accent-700: #b45309; /* High-contrast text safe */
+  --color-accent-800: #92400e;
+  --color-accent-900: #78350f;
+
+  /* Neutrals & Surfaces (High-Contrast & Clean Structure) */
+  --color-slate-50: #f8fafc;
+  --color-slate-100: #f1f5f9;
+  --color-slate-200: #e2e8f0;
+  --color-slate-300: #cbd5e1;
+  --color-slate-400: #94a3b8;
+  --color-slate-500: #64748b;
+  --color-slate-600: #475569;
+  --color-slate-700: #334155; /* Secondary text: 7.2:1 contrast ratio */
+  --color-slate-800: #1e293b;
+  --color-slate-900: #0f172a; /* Primary text: 15.8:1 contrast ratio */
+
+  /* Structural 1px Borders */
+  --border-subtle: #f1f5f9;
+  --border-default: #e2e8f0;
+  --border-strong: #cbd5e1;
+  --border-brand: #bbf7d0;
+
+  /* Functional Semantic Feedback */
+  --color-success: #15803d;
+  --color-warning: #b45309;
+  --color-danger: #b91c1c;
+  --color-info: #0369a1;
+  
+  /* WhatsApp Conversion (High-Contrast WCAG-safe) */
+  --color-whatsapp: #15803d;
+  --color-whatsapp-surface: #22c55e;
+  --color-whatsapp-dark: #14532d;
+
+  /* Backgrounds & Canvas */
+  --bg-app: #f8fafc;
+  --bg-surface: #ffffff;
+  --bg-surface-subtle: #f8fafc;
+  --bg-surface-muted: #f1f5f9;
+  --bg-surface-elevated: #ffffff;
+  --bg-hero: var(--color-primary-700);
+  --bg-header: rgba(255, 255, 255, 0.92);
+  --bg-modal-backdrop: rgba(15, 23, 42, 0.65);
+
+  /* ------------------------------------------------------------------------
+     2. STRICT 4px / 8px MODULAR SPACING GRID
+     ------------------------------------------------------------------------ */
+  --space-0: 0;
+  --space-1: 0.25rem;  /* 4px */
+  --space-2: 0.5rem;   /* 8px */
+  --space-3: 0.75rem;  /* 12px */
+  --space-4: 1rem;     /* 16px */
+  --space-5: 1.25rem;  /* 20px */
+  --space-6: 1.5rem;   /* 24px */
+  --space-8: 2rem;     /* 32px */
+  --space-10: 2.5rem;  /* 40px */
+  --space-12: 3rem;    /* 48px */
+  --space-16: 4rem;    /* 64px */
+  --space-20: 5rem;    /* 80px */
+
+  /* ------------------------------------------------------------------------
+     3. REFINED TYPOGRAPHIC SCALE (Plus Jakarta Sans System - DZAYANS Hub Style)
+     ------------------------------------------------------------------------ */
+  --font-display: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-body: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+  /* Typography Font Sizes */
+  --text-xs: 0.75rem;     /* 12px - labels, badges */
+  --text-sm: 0.875rem;    /* 14px - secondary text, metadata */
+  --text-base: 1rem;      /* 16px - normal body text, buttons */
+  --text-lg: 1.125rem;    /* 18px - intro text, product titles */
+  --text-xl: 1.25rem;     /* 20px - card headings */
+  --text-2xl: 1.5rem;     /* 24px - subsection H3 */
+  --text-3xl: 2.125rem;   /* 34px - section H2 */
+  --text-4xl: 2.375rem;   /* 38px - hero H1 mobile */
+  --text-5xl: 3.375rem;   /* 54px - hero H1 desktop */
+
+  /* Typography Line Heights */
+  --lh-tight: 1.08;
+  --lh-heading: 1.22;
+  --lh-card: 1.32;
+  --lh-body: 1.62;
+
+  /* Typography Letter Spacings */
+  --tracking-hero: -0.028em;
+  --tracking-heading: -0.018em;
+  --tracking-card: -0.01em;
+  --tracking-normal: 0em;
+
+  /* ------------------------------------------------------------------------
+     4. RESTRAINED BORDER RADII & SHADOWS
+     ------------------------------------------------------------------------ */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
+  --radius-full: 9999px;
+
+  /* Subtle, crisp elevation */
+  --shadow-xs: 0 1px 2px 0 rgba(15, 23, 42, 0.04);
+  --shadow-sm: 0 1px 3px 0 rgba(15, 23, 42, 0.06), 0 1px 2px -1px rgba(15, 23, 42, 0.04);
+  --shadow-md: 0 4px 6px -1px rgba(15, 23, 42, 0.06), 0 2px 4px -2px rgba(15, 23, 42, 0.04);
+  --shadow-lg: 0 10px 25px -3px rgba(15, 23, 42, 0.08), 0 4px 10px -4px rgba(15, 23, 42, 0.04);
+  --shadow-card-hover: 0 12px 24px -4px rgba(22, 101, 52, 0.12), 0 4px 8px -2px rgba(15, 23, 42, 0.06);
+  --shadow-glow-green: 0 0 20px rgba(34, 197, 94, 0.25);
+  --shadow-glow-amber: 0 0 20px rgba(245, 158, 11, 0.25);
+
+  /* Transitions */
+  --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-normal: 250ms cubic-bezier(0.16, 1, 0.3, 1);
+  --transition-spring: 350ms cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  /* Layout Widths */
+  --container-max-width: 1440px;
+  --header-height: 70px;
+  --bottom-nav-height: 62px;
+}
+
+/* --------------------------------------------------------------------------
+   5. SLEEK OLED DARK THEME SYSTEM
+   -------------------------------------------------------------------------- */
+[data-theme="dark"] {
+  /* Brand Adjustments for Dark Backgrounds */
+  --color-primary-50: rgba(34, 197, 94, 0.1);
+  --color-primary-100: rgba(34, 197, 94, 0.18);
+  --color-primary-200: rgba(34, 197, 94, 0.3);
+  --color-primary-600: #22c55e;
+  --color-primary-700: #16a34a;
+  --color-primary-800: #15803d;
+  --color-primary-900: #052e16;
+
+  --color-accent-50: rgba(245, 158, 11, 0.1);
+  --color-accent-100: rgba(245, 158, 11, 0.2);
+  --color-accent-600: #fbbf24;
+  --color-accent-700: #f59e0b;
+  --color-accent-800: #d97706;
+
+  /* High contrast dark surfaces & text hierarchy */
+  --color-slate-50: #0f172a;
+  --color-slate-100: #1e293b;
+  --color-slate-200: #334155;
+  --color-slate-300: #475569;
+  --color-slate-400: #94a3b8;
+  --color-slate-500: #cbd5e1;
+  --color-slate-600: #e2e8f0;
+  --color-slate-700: #f1f5f9;
+  --color-slate-800: #f8fafc;
+  --color-slate-900: #ffffff;
+
+  /* Structural 1px Borders in Dark Mode */
+  --border-subtle: rgba(255, 255, 255, 0.07);
+  --border-default: rgba(255, 255, 255, 0.12);
+  --border-strong: rgba(255, 255, 255, 0.22);
+  --border-brand: rgba(34, 197, 94, 0.35);
+
+  /* Functional Semantic Feedback in Dark Mode */
+  --color-success: #22c55e;
+  --color-warning: #fbbf24;
+  --color-danger: #f87171;
+  --color-info: #38bdf8;
+
+  --color-whatsapp: #22c55e;
+  --color-whatsapp-surface: #15803d;
+  --color-whatsapp-dark: #16a34a;
+
+  /* Backgrounds & Canvas */
+  --bg-app: #090d16;
+  --bg-surface: #0f172a;
+  --bg-surface-subtle: #131d31;
+  --bg-surface-muted: #1e293b;
+  --bg-surface-elevated: #162035;
+  --bg-hero: var(--color-primary-700);
+  --bg-header: rgba(15, 23, 42, 0.90);
+  --bg-modal-backdrop: rgba(0, 0, 0, 0.78);
+
+  /* Shadows for Dark Mode with luminous edge glows */
+  --shadow-xs: 0 1px 2px 0 rgba(0, 0, 0, 0.4);
+  --shadow-sm: 0 2px 4px 0 rgba(0, 0, 0, 0.5);
+  --shadow-md: 0 4px 10px -1px rgba(0, 0, 0, 0.6);
+  --shadow-lg: 0 12px 28px -4px rgba(0, 0, 0, 0.75);
+  --shadow-card-hover: 0 14px 28px -4px rgba(0, 0, 0, 0.8), 0 0 16px rgba(34, 197, 94, 0.18);
+}

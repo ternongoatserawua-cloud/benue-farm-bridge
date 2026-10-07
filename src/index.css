@@ -1,0 +1,117 @@
+@import './styles/variables.css';
+@import './styles/layout.css';
+@import './styles/components.css';
+@import './styles/responsive.css';
+
+/* Base Reset & Box Sizing */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  font-size: 16px;
+  scroll-behavior: smooth;
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  font-family: var(--font-body);
+  font-size: var(--text-base);
+  font-weight: 400;
+  line-height: var(--lh-body);
+  color: var(--color-slate-900);
+  background-color: var(--bg-app);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow-x: hidden;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-display);
+  color: var(--color-slate-900);
+  margin: 0;
+}
+
+h1 {
+  font-size: var(--text-4xl); /* 38px mobile */
+  font-weight: 800;
+  line-height: 1.12;
+  letter-spacing: var(--tracking-hero);
+}
+
+@media (min-width: 768px) {
+  h1 {
+    font-size: var(--text-5xl); /* 54px desktop */
+    line-height: 1.08;
+  }
+}
+
+h2 {
+  font-size: 1.75rem; /* 28px mobile */
+  font-weight: 700;
+  line-height: 1.22;
+  letter-spacing: var(--tracking-heading);
+}
+
+@media (min-width: 768px) {
+  h2 {
+    font-size: var(--text-3xl); /* 34px desktop */
+  }
+}
+
+h3 {
+  font-size: 1.375rem; /* 22px mobile */
+  font-weight: 700;
+  line-height: 1.25;
+  letter-spacing: -0.012em;
+}
+
+@media (min-width: 768px) {
+  h3 {
+    font-size: var(--text-2xl); /* 24px desktop */
+  }
+}
+
+h4 {
+  font-size: 1.125rem; /* 18px */
+  font-weight: 600;
+  line-height: 1.32;
+  letter-spacing: -0.01em;
+}
+
+img, svg, video {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+button, input, select, textarea {
+  font: inherit;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+
+  background: var(--color-slate-100);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-slate-300);
+  border-radius: var(--radius-full);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-slate-400);
+}

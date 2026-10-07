@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 100" fill="none">
+  <defs>
+    <linearGradient id="primaryGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#16a34a" />
+      <stop offset="100%" stop-color="#15803d" />
+    </linearGradient>
+    <linearGradient id="goldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#fbbf24" />
+      <stop offset="100%" stop-color="#d97706" />
+    </linearGradient>
+    <linearGradient id="blueGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38bdf8" />
+      <stop offset="100%" stop-color="#0284c7" />
+    </linearGradient>
+  </defs>
+
+  <!-- Logo Icon -->
+  <g transform="translate(10, 10)">
+    <!-- Base / Shield badge -->
+    <rect width="80" height="80" rx="22" fill="#15803d" />
+    <rect x="2" y="2" width="76" height="76" rx="20" stroke="url(#goldGrad)" stroke-width="2.5" fill="none" opacity="0.6"/>
+    
+    <!-- River Wave (Benue River) -->
+    <path d="M15 58 Q 30 48, 45 56 T 70 52" stroke="url(#blueGrad)" stroke-width="4.5" stroke-linecap="round" fill="none"/>
+    
+    <!-- Sprout / Agriculture Leaf -->
+    <path d="M40 50 C40 32, 22 26, 22 26 C22 26, 26 44, 40 50 Z" fill="url(#goldGrad)"/>
+    <path d="M40 50 C40 28, 58 20, 58 20 C58 20, 56 42, 40 50 Z" fill="#ffffff"/>
+    <circle cx="40" cy="20" r="4" fill="#fbbf24"/>
+  </g>
+
+  <!-- Logo Text -->
+  <g transform="translate(104, 25)">
+    <!-- Benue Market Title -->
+    <text x="0" y="32" font-family="'Outfit', 'Plus Jakarta Sans', sans-serif" font-weight="800" font-size="32" fill="#0f172a" letter-spacing="-0.5">
+      Benue<tspan fill="#15803d">Market</tspan>
+    </text>
+    <!-- Tagline: Buy. Sell. Connect. -->
+    <text x="2" y="54" font-family="'Plus Jakarta Sans', sans-serif" font-weight="600" font-size="12" fill="#d97706" letter-spacing="2.2">
+      BUY. SELL. CONNECT.
+    </text>
+  </g>
+</svg>

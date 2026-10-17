@@ -397,7 +397,11 @@ export function broadcastProfileUpdate(userId, updates) {
 /**
  * Register a new user with Supabase Auth and initialize their profile.
  */
-export async function signUpUser({ email, password, name, phone = '', role = 'buyer', lga = 'Ukum' }) {
+export async function signUpUser({ email, password, name, phone = '', role = 'buyer', lga = 'Ukum', agreedToTerms = false }) {
+  if (!agreedToTerms) {
+    return { user: null, error: 'You must agree to the Benue Farm Bridge Terms and Conditions before creating an account.' };
+  }
+
   const cleanInput = (email || '').trim();
   const normalizedPhone = normalizeNigerianPhone(phone || (cleanInput.includes('@') ? '' : cleanInput));
   
@@ -417,6 +421,9 @@ export async function signUpUser({ email, password, name, phone = '', role = 'bu
       lga,
       location: 'Benue State',
       verified: false,
+      agreedToTerms: true,
+      agreedToTermsAt: new Date().toISOString(),
+      termsVersion: '2.4',
       createdAt: new Date().toISOString()
     };
     MOCK_USERS_STORE.push(newUser);
@@ -434,7 +441,10 @@ export async function signUpUser({ email, password, name, phone = '', role = 'bu
           phone: normalizedPhone || phone,
           role: role,
           lga: lga,
-          status: 'active'
+          status: 'active',
+          agreed_to_terms: true,
+          agreed_to_terms_at: new Date().toISOString(),
+          terms_version: '2.4'
         }
       }
     });
@@ -448,7 +458,10 @@ export async function signUpUser({ email, password, name, phone = '', role = 'bu
       phone: normalizedPhone || phone,
       role,
       status: 'active',
-      lga
+      lga,
+      agreedToTerms: true,
+      agreedToTermsAt: new Date().toISOString(),
+      termsVersion: '2.4'
     };
 
     return { user: userProfile, error: null };

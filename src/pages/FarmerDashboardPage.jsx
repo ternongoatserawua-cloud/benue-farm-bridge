@@ -466,7 +466,7 @@ export default function FarmerDashboardPage({
               </p>
             </div>
             <button
-              onClick={onOpenSubscription}
+              onClick={() => onOpenSubscription('starter')}
               style={{
                 padding:'12px 24px', borderRadius:'10px', border:'none',
                 background:'linear-gradient(135deg,#16a34a,#15803d)',
@@ -501,14 +501,14 @@ export default function FarmerDashboardPage({
             </div>
             <div style={{ flex:1, minWidth:'200px' }}>
               <h3 style={{ margin:'0 0 4px', color:'#991b1b', fontSize:'1rem', fontWeight:'800' }}>
-                Subscription Expired — Products Now Hidden
+                Subscription Inactive / Revoked — Products Now Hidden
               </h3>
               <p style={{ margin:0, color:'#b91c1c', fontSize:'13px', lineHeight:'1.5' }}>
-                Your <strong>{activePlan?.name || 'subscription'}</strong> plan has expired. All your products are currently hidden from the public storefront. Renew to restore visibility instantly.
+                Your subscription has expired or was revoked by an administrator. All your products are currently hidden from the public storefront. Subscribe or renew to restore visibility instantly.
               </p>
             </div>
             <button
-              onClick={onOpenSubscription}
+              onClick={() => onOpenSubscription(activePlan?.id || currentSubscription?.planId || 'starter')}
               style={{
                 padding:'10px 20px', borderRadius:'10px', border:'none',
                 background:'linear-gradient(135deg,#dc2626,#b91c1c)',
@@ -546,7 +546,7 @@ export default function FarmerDashboardPage({
               </p>
             </div>
             <button
-              onClick={onOpenSubscription}
+              onClick={() => onOpenSubscription(activePlan?.id || currentSubscription?.planId || 'starter')}
               style={{
                 padding:'10px 20px', borderRadius:'10px', border:'none',
                 background:'linear-gradient(135deg,#d97706,#b45309)',
@@ -591,7 +591,7 @@ export default function FarmerDashboardPage({
                 Up to <strong>{subLimit}</strong> product listings · Expires in <strong>{subDaysLeft} day{subDaysLeft !== 1 ? 's' : ''}</strong>
                 &nbsp;·&nbsp;
                 <button
-                  onClick={onOpenSubscription}
+                  onClick={() => onOpenSubscription(activePlan?.id || currentSubscription?.planId || 'starter')}
                   style={{ background:'none', border:'none', color:'#15803d', fontWeight:'700', cursor:'pointer', fontSize:'12.5px', textDecoration:'underline', padding:0 }}
                 >
                   Renew / Upgrade

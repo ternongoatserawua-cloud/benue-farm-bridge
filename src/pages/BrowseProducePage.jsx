@@ -1,43 +1,200 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
-  Filter,
-  SlidersHorizontal,
   RotateCcw,
   PackageSearch,
-  Check,
   ChevronDown,
-  X
+  X,
+  Loader2,
+  ArrowUp,
+  Sprout,
+  AlertCircle,
+  RefreshCw
 } from 'lucide-react';
 import ProductCard from '../components/marketplace/ProductCard.jsx';
+import ProductCardSkeleton from '../components/marketplace/ProductCardSkeleton.jsx';
 import SearchBar from '../components/marketplace/SearchBar.jsx';
 import CategoryPills from '../components/marketplace/CategoryPills.jsx';
 import Button from '../components/common/Button.jsx';
-import Badge from '../components/common/Badge.jsx';
-
-import { CATEGORIES, normalizeCategory } from '../data/categories.js';
+import { useInfiniteScroll } from '../hooks/useInfiniteScroll.js';
+import { fetchPaginatedProducts } from '../services/productsService.js';
+import { CATEGORIES } from '../data/categories.js';
 import { BENUE_LGAS } from '../data/locations.js';
 
+const PAGE_SIZE = 12;
+
 export default function BrowseProducePage({
-  products = [],
+  products: initialProducts = [],
   savedProductIds = new Set(),
   onToggleSave = () => {},
   onViewProduct = () => {},
   initialFilters = {}
 }) {
+  // Filter and sorting states
   const [searchQuery, setSearchQuery] = useState(initialFilters.search || '');
+  const [debouncedSearch, setDebouncedSearch] = useState(initialFilters.search || '');
   const [selectedCategory, setSelectedCategory] = useState(initialFilters.category || 'all');
   const [selectedLga, setSelectedLga] = useState(initialFilters.lga || 'all');
   const [sortBy, setSortBy] = useState('newest'); // 'newest' | 'price-asc' | 'price-desc'
   const [inStockOnly, setInStockOnly] = useState(false);
-  const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
+
+  // Paginated produce listing states
+  const [produceList, setProduceList] = useState([]);
+  const [page, setPage] = useState(0);
+  const [totalCount, setTotalCount] = useState(0);
+  const [hasMore, setHasMore] = useState(true);
+  const [isLoadingInitial, setIsLoadingInitial] = useState(true);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [error, setError] = useState(null);
+
+  // Request race-condition and debounce tracker
+  const requestIdRef = useRef(0);
+
+  // Debounce search input keystrokes by 300ms
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedSearch(searchQuery);
+    }, 300);
+    return () => clearTimeout(handler);
+  }, [searchQuery]);
+
+  // Fetch initial batch (Page 0) whenever search, category, location, or sort changes
+  const loadInitialBatch = useCallback(async () => {
+    const currentRequestId = ++requestIdRef.current;
+    setIsLoadingInitial(true);
+    setIsLoadingMore(false);
+    setError(null);
+    setPage(0);
+
+    try {
+      const result = await fetchPaginatedProducts({
+        page: 0,
+        pageSize: PAGE_SIZE,
+        category: selectedCategory,
+        lga: selectedLga,
+        search: debouncedSearch,
+        inStockOnly,
+        sortBy
+      });
+
+      // Discard results from old/superseded queries
+      if (currentRequestId !== requestIdRef.current) return;
+
+      if (result.error && (!result.data || result.data.length === 0)) {
+        setError(result.error);
+        setProduceList([]);
+        setTotalCount(0);
+        setHasMore(false);
+      } else {
+        setProduceList(result.data || []);
+        setTotalCount(result.totalCount || (result.data ? result.data.length : 0));
+        setHasMore(Boolean(result.hasMore));
+        setError(null);
+      }
+    } catch (err) {
+      if (currentRequestId !== requestIdRef.current) return;
+      setError(err.message || 'Failed to fetch produce listings from database.');
+      setProduceList([]);
+      setTotalCount(0);
+      setHasMore(false);
+    } finally {
+      if (currentRequestId === requestIdRef.current) {
+        setIsLoadingInitial(false);
+      }
+    }
+  }, [selectedCategory, selectedLga, debouncedSearch, inStockOnly, sortBy]);
+
+  // Trigger initial batch load when filters change
+  useEffect(() => {
+    loadInitialBatch();
+  }, [loadInitialBatch]);
+
+  // Immediately refresh storefront whenever any subscription is activated or updated
+  useEffect(() => {
+    const handleSubUpdated = () => {
+      loadInitialBatch();
+    };
+    window.addEventListener('benue_market_subscription_updated', handleSubUpdated);
+    return () => {
+      window.removeEventListener('benue_market_subscription_updated', handleSubUpdated);
+    };
+  }, [loadInitialBatch]);
+
+  // Fetch subsequent batch when user scrolls near the bottom
+  const loadNextBatch = useCallback(async () => {
+    if (isLoadingInitial || isLoadingMore || !hasMore || error) return;
+
+    const nextPage = page + 1;
+    const currentRequestId = requestIdRef.current;
+    setIsLoadingMore(true);
+
+    try {
+      const result = await fetchPaginatedProducts({
+        page: nextPage,
+        pageSize: PAGE_SIZE,
+        category: selectedCategory,
+        lga: selectedLga,
+        search: debouncedSearch,
+        inStockOnly,
+        sortBy
+      });
+
+      // Discard results from old/superseded queries
+      if (currentRequestId !== requestIdRef.current) return;
+
+      if (result.error && (!result.data || result.data.length === 0)) {
+        setError(result.error);
+      } else {
+        const freshItems = result.data || [];
+        setProduceList((prev) => {
+          // Strictly prevent duplicate products when loading subsequent batches
+          const existingIds = new Set(prev.map((item) => item.id));
+          const deduplicated = freshItems.filter((item) => !existingIds.has(item.id));
+          return [...prev, ...deduplicated];
+        });
+        setPage(nextPage);
+        setTotalCount(result.totalCount || (produceList.length + freshItems.length));
+        setHasMore(Boolean(result.hasMore));
+        setError(null);
+      }
+    } catch (err) {
+      if (currentRequestId !== requestIdRef.current) return;
+      setError(err.message || 'Failed to load additional produce listings.');
+    } finally {
+      if (currentRequestId === requestIdRef.current) {
+        setIsLoadingMore(false);
+      }
+    }
+  }, [isLoadingInitial, isLoadingMore, hasMore, error, page, selectedCategory, selectedLga, debouncedSearch, inStockOnly, sortBy, produceList.length]);
+
+  // Connect Intersection Observer sentinel
+  const { sentinelRef } = useInfiniteScroll({
+    onLoadMore: loadNextBatch,
+    hasMore,
+    isLoading: isLoadingInitial || isLoadingMore,
+    rootMargin: '350px',
+    threshold: 0.1,
+    disabled: Boolean(error)
+  });
 
   // Reset all filters
   const handleResetFilters = () => {
     setSearchQuery('');
+    setDebouncedSearch('');
     setSelectedCategory('all');
     setSelectedLga('all');
     setSortBy('newest');
     setInStockOnly(false);
+    setError(null);
+  };
+
+  // Retry loading after an error
+  const handleRetry = () => {
+    setError(null);
+    if (produceList.length === 0) {
+      loadInitialBatch();
+    } else {
+      loadNextBatch();
+    }
   };
 
   // Active filters count
@@ -46,51 +203,8 @@ export default function BrowseProducePage({
     (searchQuery ? 1 : 0) +
     (inStockOnly ? 1 : 0);
 
-  // Filter and sort products (strictly approved items only)
-  const filteredProducts = useMemo(() => {
-    return products.filter((prod) => {
-      // Must be approved for storefront display
-      if ((prod.status || 'approved') !== 'approved') return false;
-
-      // Category filter
-      if (selectedCategory !== 'all' && normalizeCategory(prod.category) !== normalizeCategory(selectedCategory)) {
-        return false;
-      }
-
-      // LGA filter
-      if (selectedLga !== 'all') {
-        const prodLga = (prod.lga || '').toLowerCase();
-        const prodLoc = (prod.location || '').toLowerCase();
-        const targetLga = selectedLga.toLowerCase();
-        if (!prodLga.includes(targetLga) && !prodLoc.includes(targetLga)) {
-          return false;
-        }
-      }
-
-      // Search query
-      if (searchQuery.trim()) {
-        const q = searchQuery.toLowerCase();
-        const matchesName = prod.name.toLowerCase().includes(q);
-        const matchesLoc = (prod.location || '').toLowerCase().includes(q);
-        const matchesSeller = (prod.seller || '').toLowerCase().includes(q);
-        const matchesDesc = (prod.description || '').toLowerCase().includes(q);
-        if (!matchesName && !matchesLoc && !matchesSeller && !matchesDesc) {
-          return false;
-        }
-      }
-
-      // In Stock filter
-      if (inStockOnly && !prod.available) {
-        return false;
-      }
-
-      return true;
-    }).sort((a, b) => {
-      if (sortBy === 'price-asc') return a.price - b.price;
-      if (sortBy === 'price-desc') return b.price - a.price;
-      return 0; // default newest / original order
-    });
-  }, [products, selectedCategory, selectedLga, searchQuery, inStockOnly, sortBy]);
+  const displayCount = produceList.length;
+  const progressPercent = totalCount > 0 ? Math.min(100, Math.round((displayCount / totalCount) * 100)) : 0;
 
   return (
     <div className="browse-page-root">
@@ -108,8 +222,11 @@ export default function BrowseProducePage({
               <SearchBar
                 value={searchQuery}
                 onChange={setSearchQuery}
-                onSearch={() => {}}
-                onClear={() => setSearchQuery('')}
+                onSearch={() => setDebouncedSearch(searchQuery)}
+                onClear={() => {
+                  setSearchQuery('');
+                  setDebouncedSearch('');
+                }}
                 placeholder="Search produce name, farmer, or location (e.g., Zaki Biam, Rice, Gboko)..."
               />
             </div>
@@ -131,7 +248,7 @@ export default function BrowseProducePage({
         {/* Filter Toolbar & Controls */}
         <div className="browse-toolbar">
           <div className="browse-toolbar-left">
-            {/* Category Selector Dropdown matching List Produce Page */}
+            {/* Category Selector Dropdown */}
             <div className="filter-select-wrap">
               <label htmlFor="category-select" className="filter-label">Produce Category:</label>
               <select
@@ -234,7 +351,14 @@ export default function BrowseProducePage({
             {searchQuery && (
               <span className="active-filter-chip">
                 Search: "{searchQuery}"
-                <button type="button" onClick={() => setSearchQuery('')} aria-label="Remove search query">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearchQuery('');
+                    setDebouncedSearch('');
+                  }}
+                  aria-label="Remove search query"
+                >
                   <X size={12} />
                 </button>
               </span>
@@ -251,25 +375,157 @@ export default function BrowseProducePage({
           </div>
         )}
 
-        {/* Results Header */}
-        <div className="browse-results-count">
-          <span>Showing <strong>{filteredProducts.length}</strong> agricultural listing{filteredProducts.length === 1 ? '' : 's'}</span>
+        {/* Results Header with Infinite Scroll Progress */}
+        <div className="browse-results-count-bar">
+          <div className="browse-results-count">
+            {isLoadingInitial ? (
+              <span>Loading verified Benue produce listings...</span>
+            ) : totalCount > 0 ? (
+              <span>
+                Showing <strong>{displayCount}</strong> of <strong>{totalCount}</strong> agricultural listing{totalCount === 1 ? '' : 's'}
+              </span>
+            ) : (
+              <span>No agricultural listings found</span>
+            )}
+          </div>
+
+          {!isLoadingInitial && totalCount > PAGE_SIZE && (
+            <div
+              className="browse-progress-container"
+              title={`${progressPercent}% of listings loaded`}
+            >
+              <div className="browse-progress-bar">
+                <div
+                  className="browse-progress-fill"
+                  style={{
+                    width: `${progressPercent}%`
+                  }}
+                />
+              </div>
+              <span className="browse-progress-text">
+                {progressPercent}%
+              </span>
+            </div>
+          )}
         </div>
 
-        {/* Product Grid / Empty State */}
-        {filteredProducts.length > 0 ? (
+        {/* Main Produce Content Area */}
+        {isLoadingInitial ? (
+          // Initial Loading State: 12 Product Skeletons
           <div className="grid-products">
-            {filteredProducts.map((product) => (
-              <ProductCard
-                key={product.id}
-                product={product}
-                isSaved={savedProductIds.has(product.id)}
-                onToggleSave={onToggleSave}
-                onViewDetails={onViewProduct}
-              />
+            {Array.from({ length: PAGE_SIZE }).map((_, index) => (
+              <ProductCardSkeleton key={`init-skeleton-${index}`} />
             ))}
           </div>
+        ) : produceList.length > 0 ? (
+          // Products Display Grid
+          <>
+            <div className="grid-products">
+              {produceList.map((product) => (
+                <ProductCard
+                  key={product.id}
+                  product={product}
+                  isSaved={savedProductIds.has(product.id)}
+                  onToggleSave={onToggleSave}
+                  onViewDetails={onViewProduct}
+                />
+              ))}
+
+              {/* Shimmer skeleton placeholders during subsequent infinite batch loading */}
+              {isLoadingMore && (
+                <>
+                  <ProductCardSkeleton key="skel-more-1" />
+                  <ProductCardSkeleton key="skel-more-2" />
+                  <ProductCardSkeleton key="skel-more-3" />
+                  <ProductCardSkeleton key="skel-more-4" />
+                </>
+              )}
+            </div>
+
+            {/* Invisible IntersectionObserver Sentinel Element */}
+            {hasMore && !error && (
+              <div
+                ref={sentinelRef}
+                className="infinite-scroll-sentinel"
+                aria-hidden="true"
+              />
+            )}
+
+            {/* Unobtrusive Active Loading Status Indicator */}
+            {isLoadingMore && (
+              <div className="infinite-scroll-loading-indicator" role="status" aria-live="polite">
+                <Loader2 size={20} className="spinner-icon animate-spin" />
+                <span>Loading more fresh harvests from Benue farmers...</span>
+              </div>
+            )}
+
+            {/* Network / Fetch Error State with Retry Button */}
+            {error && (
+              <div className="infinite-scroll-error" role="alert">
+                <AlertCircle size={20} />
+                <span>{error}</span>
+                <Button
+                  variant="outline-primary"
+                  size="sm"
+                  icon={RefreshCw}
+                  onClick={handleRetry}
+                >
+                  Retry
+                </Button>
+              </div>
+            )}
+
+            {/* End of catalog milestone */}
+            {!hasMore && !isLoadingMore && produceList.length > 0 && (
+              <div className="infinite-scroll-end">
+                <div className="infinite-scroll-end-badge">
+                  <Sprout size={24} />
+                </div>
+                <h4 className="infinite-scroll-end-title">You've reached the end of the harvest listings</h4>
+                <p className="infinite-scroll-end-desc">
+                  You have viewed all {displayCount} verified produce listings currently available matching your selection across Benue State.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+                  className="btn-back-to-top"
+                  aria-label="Scroll back to top of produce listings"
+                >
+                  <ArrowUp size={16} />
+                  <span>Back to Top</span>
+                </button>
+              </div>
+            )}
+          </>
+        ) : error ? (
+          // Error State when no products could be loaded
+          <div className="empty-state-card">
+            <div className="empty-state-icon-wrap" style={{ color: '#ef4444' }}>
+              <AlertCircle size={48} />
+            </div>
+            <h3 className="empty-state-title">Unable to load produce listings</h3>
+            <p className="empty-state-desc">
+              {error}
+            </p>
+            <div className="flex gap-2 justify-center">
+              <Button
+                variant="primary"
+                icon={RefreshCw}
+                onClick={handleRetry}
+              >
+                Try Again
+              </Button>
+              <Button
+                variant="outline"
+                icon={RotateCcw}
+                onClick={handleResetFilters}
+              >
+                Reset Filters
+              </Button>
+            </div>
+          </div>
         ) : (
+          // Empty state: No matching produce listings
           <div className="empty-state-card">
             <div className="empty-state-icon-wrap">
               <PackageSearch size={48} />

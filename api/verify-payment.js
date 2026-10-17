@@ -75,7 +75,8 @@ export default async function handler(req, res) {
   if (!reference || !planId || !vendorId) {
     return res.status(400).json({ success: false, error: 'Missing required parameters: reference, planId, vendorId.' });
   }
-  if (!UUID_REGEX.test(vendorId)) {
+  const isUUIDOrMock = UUID_REGEX.test(vendorId) || /^[a-z0-9_-]{1,64}$/i.test(vendorId);
+  if (!isUUIDOrMock) {
     return res.status(400).json({ success: false, error: 'Invalid vendor ID format.' });
   }
   if (!PLAN_PRICES[planId]) {
@@ -147,23 +148,8 @@ export default async function handler(req, res) {
         }
       }
 
-      await adminClient.from('payment_transactions').upsert(
-        {
-          reference,
-          vendor_id: vendorId,
-          plan_id: planId,
-          amount: payData.amount / 100,
-          currency: 'NGN',
-          status: 'success',
-          channel: payData.channel || 'card',
-          paid_at: now.toISOString(),
-          customer_email: payData.customer?.email || null,
-          paystack_data: payData,
-        },
-        { onConflict: 'reference' }
-      );
-
-      await adminClient
+      // Update profiles subscription first
+      const { error: profileErr } = await adminClient
         .from('profiles')
         .update({
           subscription_plan: planId,
@@ -174,6 +160,31 @@ export default async function handler(req, res) {
           updated_at: now.toISOString(),
         })
         .eq('id', vendorId);
+
+      if (profileErr) {
+        console.warn('[verify-payment] Profile update error:', profileErr.message);
+      }
+
+      // Record in payment_transactions (audit log)
+      try {
+        await adminClient.from('payment_transactions').upsert(
+          {
+            reference,
+            vendor_id: vendorId,
+            plan_id: planId,
+            amount: payData.amount / 100,
+            currency: 'NGN',
+            status: 'success',
+            channel: payData.channel || 'card',
+            paid_at: now.toISOString(),
+            customer_email: payData.customer?.email || null,
+            paystack_data: payData,
+          },
+          { onConflict: 'reference' }
+        );
+      } catch (logErr) {
+        console.warn('[verify-payment] payment_transactions audit warning (non-fatal):', logErr.message);
+      }
     } catch (err) {
       console.error('[verify-payment] Supabase error:', err.message);
     }

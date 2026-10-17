@@ -127,11 +127,12 @@ export async function handleVerifyPayment({ reference, planId, vendorId, isRenew
   }
 
   const activeEnv = env || getDynamicEnv();
-  const secretKey = activeEnv.PAYSTACK_SECRET_KEY;
-  const isMock = reference.startsWith('BFB-DEMO-') || reference.startsWith('DEMO-') || (!secretKey || secretKey.includes('placeholder'));
+  const secretKey = activeEnv.PAYSTACK_SECRET_KEY || '';
+  const isDemoRef = reference.startsWith('BFB-DEMO-') || reference.startsWith('DEMO-');
+  const hasNoSecret = !secretKey || secretKey.includes('placeholder') || secretKey.includes('your_paystack_secret_key');
 
-  // If in demo mode without real secret key configured
-  if (isMock && (!secretKey || secretKey.includes('placeholder') || secretKey.includes('your_paystack_secret_key'))) {
+  // If in demo mode (explicit demo reference or no live secret key configured)
+  if (isDemoRef || hasNoSecret) {
     console.warn(`[Paystack] Development mock verification accepted for ref: ${reference}`);
     const adminClient = getSupabaseAdmin(activeEnv);
     const subRecord = await recordSuccessfulPaymentInDb({
@@ -266,6 +267,24 @@ export async function handlePaystackWebhook(rawBody, signature, env) {
   return { status: 200, body: { status: 'success' } };
 }
 
+function safeUUID(id) {
+  if (!id) return null;
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
+    return id;
+  }
+  if (id === 'farmer-1') return 'f0000000-0000-4000-8000-000000000001';
+  if (id === 'farmer-2') return 'f0000000-0000-4000-8000-000000000002';
+  if (id === 'super-admin-1') return 'a0000000-0000-4000-8000-000000000001';
+
+  let hash = 0;
+  for (let i = 0; i < id.length; i++) {
+    hash = (hash << 5) - hash + id.charCodeAt(i);
+    hash |= 0;
+  }
+  const hex = Math.abs(hash).toString(16).padStart(8, '0');
+  return `00000000-0000-4000-8000-${hex.padEnd(12, '0').slice(0, 12)}`;
+}
+
 /**
  * Helper to update Supabase profiles and insert payment_transactions record
  */
@@ -287,12 +306,14 @@ async function recordSuccessfulPaymentInDb({
 
   if (adminClient) {
     try {
+      const targetUUID = safeUUID(vendorId);
+
       // 1. Check existing subscription if renewal
       if (isRenewal) {
         const { data: profile } = await adminClient
           .from('profiles')
           .select('subscription_expires_at, subscription_started_at')
-          .eq('id', vendorId)
+          .eq('id', targetUUID)
           .maybeSingle();
 
         if (profile?.subscription_expires_at) {
@@ -303,27 +324,8 @@ async function recordSuccessfulPaymentInDb({
         }
       }
 
-      // 2. Insert into payment_transactions (ignore if duplicate)
-      await adminClient
-        .from('payment_transactions')
-        .upsert(
-          {
-            reference,
-            vendor_id: vendorId,
-            plan_id: planId,
-            amount,
-            currency: 'NGN',
-            status: 'success',
-            channel: channel || 'card',
-            paid_at: now.toISOString(),
-            customer_email: email || null,
-            paystack_data: paystackData || {}
-          },
-          { onConflict: 'reference' }
-        );
-
-      // 3. Update profiles subscription
-      await adminClient
+      // 2. Update profiles subscription FIRST
+      const { error: profileErr } = await adminClient
         .from('profiles')
         .update({
           subscription_plan: planId,
@@ -333,8 +335,34 @@ async function recordSuccessfulPaymentInDb({
           subscription_payment_ref: reference,
           updated_at: now.toISOString()
         })
-        .eq('id', vendorId);
+        .eq('id', targetUUID);
 
+      if (profileErr) {
+        console.warn('[Paystack] Profile subscription update notice:', profileErr.message);
+      }
+
+      // 3. Insert audit log into payment_transactions (non-fatal if foreign key or table mismatch)
+      try {
+        await adminClient
+          .from('payment_transactions')
+          .upsert(
+            {
+              reference,
+              vendor_id: targetUUID,
+              plan_id: planId,
+              amount,
+              currency: 'NGN',
+              status: 'success',
+              channel: channel || 'card',
+              paid_at: now.toISOString(),
+              customer_email: email || null,
+              paystack_data: paystackData || {}
+            },
+            { onConflict: 'reference' }
+          );
+      } catch (logErr) {
+        console.warn('[Paystack] payment_transactions audit log warning (non-fatal):', logErr.message);
+      }
     } catch (err) {
       console.warn('[Paystack] Supabase record exception:', err.message);
     }

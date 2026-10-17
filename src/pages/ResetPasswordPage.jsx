@@ -12,6 +12,7 @@ import {
 import Button from '../components/common/Button.jsx';
 import { updateUserPassword } from '../services/authService.js';
 import { supabase, isSupabaseConfigured } from '../lib/supabase.js';
+import { clearLoginLockout } from '../utils/authRateLimiter.js';
 
 /**
  * ResetPasswordPage
@@ -100,6 +101,7 @@ export default function ResetPasswordPage({ onNavigate = () => {} }) {
     if (updateError) {
       setError(updateError);
     } else {
+      clearLoginLockout();
       setSuccess(true);
     }
   };

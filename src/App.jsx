@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import Navbar from './components/common/Navbar.jsx';
 import MobileBottomNav from './components/common/MobileBottomNav.jsx';
 import Footer from './components/common/Footer.jsx';
@@ -19,11 +19,16 @@ import AdminDashboardPage from './pages/AdminDashboardPage.jsx';
 import AboutPage from './pages/AboutPage.jsx';
 import ContactPage from './pages/ContactPage.jsx';
 import ResetPasswordPage from './pages/ResetPasswordPage.jsx';
+import TermsPage from './pages/TermsPage.jsx';
 import SubscriptionModal from './components/marketplace/SubscriptionModal.jsx';
 import FarmerOnboardingModal from './components/farmer/FarmerOnboardingModal.jsx';
+import PWAInstallBanner from './components/common/PWAInstallBanner.jsx';
+import PWAOfflineNotice from './components/common/PWAOfflineNotice.jsx';
+import PWAUpdateToast from './components/common/PWAUpdateToast.jsx';
 
 // Services & Supabase
 import { MOCK_FARMERS } from './data/mockFarmers.js';
+import { MOCK_PRODUCTS } from './data/mockProducts.js';
 import {
   fetchProducts,
   getPersistedProducts,
@@ -35,7 +40,8 @@ import {
   subscribeToRealtimeProducts,
   subscribeToLocalProducts,
   mapToSellerUUID,
-  mapToProductUUID
+  mapToProductUUID,
+  isValidUUID
 } from './services/productsService.js';
 import { fetchFarmers, updateFarmerProfileData } from './services/farmersService.js';
 import { fetchSavedProductIds, toggleSaveProduct } from './services/savedService.js';
@@ -80,9 +86,13 @@ const getPageTitle = (page, itemData = {}) => {
     case 'about':
       return 'About Marketplace';
     case 'contact':
+    case 'support':
       return 'Contact & Support';
     case 'reset-password':
       return 'Reset Password';
+    case 'terms':
+    case 'terms-and-conditions':
+      return 'Terms & Conditions';
     default:
       return page ? page.charAt(0).toUpperCase() + page.slice(1) : 'Marketplace';
   }
@@ -171,16 +181,27 @@ export default function App() {
   const [authInitialRole, setAuthInitialRole] = useState('buyer');
   const [signOutModalOpen, setSignOutModalOpen] = useState(false);
   const [farmerOnboardingOpen, setFarmerOnboardingOpen] = useState(false);
+  const [pwaModalOpen, setPwaModalOpen] = useState(false);
 
-  // Subscription state for current logged-in vendor
+  // Subscription state for current logged-in vendor & reactive global subscription lookup map
   const [currentSubscription, setCurrentSubscription] = useState(() =>
     user?.id ? getVendorSubscriptionSync(user.id) : null
   );
+  const [allSubscriptions, setAllSubscriptions] = useState(() => getAllSubscriptionsSync());
   const [subscriptionModalOpen, setSubscriptionModalOpen] = useState(false);
   const [selectedPlanForModal, setSelectedPlanForModal] = useState(null);
 
-  const handleOpenSubscription = (plan = null) => {
-    setSelectedPlanForModal(plan);
+  const handleOpenSubscription = (planOrEvent = null) => {
+    let resolvedPlan = null;
+    const allPlans = getSubscriptionPlans();
+    if (typeof planOrEvent === 'string') {
+      resolvedPlan = allPlans.find(p => p.id === planOrEvent) || null;
+    } else if (planOrEvent && typeof planOrEvent === 'object' && planOrEvent.id && !planOrEvent.nativeEvent) {
+      resolvedPlan = planOrEvent;
+    } else if (currentSubscription?.planId) {
+      resolvedPlan = allPlans.find(p => p.id === currentSubscription.planId) || null;
+    }
+    setSelectedPlanForModal(resolvedPlan);
     setSubscriptionModalOpen(true);
   };
 
@@ -188,24 +209,61 @@ export default function App() {
   useEffect(() => {
     if (user?.id) {
       getVendorSubscription(user.id).then((sub) => {
-        if (sub) setCurrentSubscription(sub);
+        setCurrentSubscription(sub);
       });
     } else {
       setCurrentSubscription(null);
     }
-    syncAllSubscriptionsFromSupabase();
+    syncAllSubscriptionsFromSupabase().then((subs) => {
+      if (subs) setAllSubscriptions(subs);
+    });
   }, [user?.id]);
 
   // Listen for local and cross-tab subscription updates
   useEffect(() => {
     const handleSubUpdated = (e) => {
+      const freshSubs = getAllSubscriptionsSync();
+      setAllSubscriptions(freshSubs);
       if (e.detail?.vendorId === user?.id) {
         setCurrentSubscription(e.detail.subscription);
       }
-      syncAllSubscriptionsFromSupabase();
     };
     window.addEventListener('benue_market_subscription_updated', handleSubUpdated);
-    return () => window.removeEventListener('benue_market_subscription_updated', handleSubUpdated);
+
+    // Cross-tab sync via BroadcastChannel
+    let broadcastChannel = null;
+    if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+      try {
+        broadcastChannel = new BroadcastChannel('benue_market_sync');
+        broadcastChannel.onmessage = (msg) => {
+          if (msg.data?.type === 'SUBSCRIPTIONS_UPDATED') {
+            const freshSubs = msg.data.subs || getAllSubscriptionsSync();
+            setAllSubscriptions(freshSubs);
+            if (user?.id) {
+              setCurrentSubscription(freshSubs[user.id] || null);
+            }
+          }
+        };
+      } catch {}
+    }
+
+    // Storage event for other tabs
+    const handleStorageChange = (e) => {
+      if (e.key === 'benue_market_subscriptions') {
+        const freshSubs = getAllSubscriptionsSync();
+        setAllSubscriptions(freshSubs);
+        if (user?.id) {
+          setCurrentSubscription(freshSubs[user.id] || null);
+        }
+      }
+    };
+    window.addEventListener('storage', handleStorageChange);
+
+    return () => {
+      window.removeEventListener('benue_market_subscription_updated', handleSubUpdated);
+      window.removeEventListener('storage', handleStorageChange);
+      if (broadcastChannel) broadcastChannel.close();
+    };
   }, [user?.id]);
 
   // Toast notification state
@@ -220,19 +278,20 @@ export default function App() {
   };
 
   // Function to reload all products including pending directly from database
-  const loadAllProducts = () => {
-    fetchProducts({ includePending: true, includeRecycled: true }).then(({ data }) => {
-      if (data) {
+  const loadAllProducts = useCallback(() => {
+    return fetchProducts({ includePending: true, includeRecycled: true }).then(({ data }) => {
+      if (data && Array.isArray(data)) {
         setProducts(data);
         // If we are on product-details, sync activeProduct if needed
         const route = getInitialRoute();
         if (route.page === 'product-details' && route.productId) {
-          const matched = data.find((p) => p.id === route.productId);
+          const matched = data.find((p) => p.id === route.productId || p.id === mapToProductUUID(route.productId));
           if (matched) setActiveProduct(matched);
         }
       }
+      return data;
     });
-  };
+  }, []);
 
   // Navigate handler with robust history push, item data tracking, and URL hash sync
   const handleNavigate = (page, params = {}, options = {}) => {
@@ -474,20 +533,6 @@ export default function App() {
       });
     };
 
-    // Function to reload and sync all products from Supabase
-    const loadAllProducts = () => {
-      fetchProducts({ includePending: true, includeRecycled: true }).then(({ data }) => {
-        if (data && Array.isArray(data)) {
-          setProducts(data);
-          const route = getInitialRoute();
-          if (route.productId) {
-            const matchedProd = data.find((p) => p.id === route.productId || p.id === mapToProductUUID(route.productId));
-            if (matchedProd) setActiveProduct(matchedProd);
-          }
-        }
-      });
-    };
-
     // Load initial products (including pending and recycled for admin control)
     loadAllProducts();
 
@@ -515,6 +560,37 @@ export default function App() {
 
     // Live Supabase Realtime subscription across all devices & IP addresses
     const realtimeProfilesSub = subscribeToRealtimeProfiles((updatedRow) => {
+      if (!updatedRow) return;
+
+      // Realtime subscription status updates from Supabase
+      if (updatedRow.id) {
+        const isCancelled = !updatedRow.subscription_plan || updatedRow.subscription_status === 'cancelled';
+        const subRecord = {
+          vendorId: updatedRow.id,
+          planId: isCancelled ? null : updatedRow.subscription_plan,
+          startedAt: updatedRow.subscription_started_at || null,
+          expiresAt: isCancelled
+            ? (updatedRow.subscription_expires_at || new Date().toISOString())
+            : updatedRow.subscription_expires_at,
+          status: isCancelled ? 'cancelled' : (updatedRow.subscription_status || 'active'),
+          paymentRef: updatedRow.subscription_payment_ref || ''
+        };
+
+        // If the current logged-in user is the vendor whose subscription changed
+        if (user?.id === updatedRow.id) {
+          setCurrentSubscription(subRecord);
+        }
+
+        // Update allSubscriptions map reactively across app
+        setAllSubscriptions((prev) => {
+          const fresh = { ...prev, [updatedRow.id]: subRecord };
+          try {
+            localStorage.setItem('benue_market_subscriptions', JSON.stringify(fresh));
+          } catch {}
+          return fresh;
+        });
+      }
+
       const newAvatar = updatedRow.avatar_url;
       const newCover = updatedRow.cover_url || updatedRow.cover_image;
       const updatedName = updatedRow.full_name;
@@ -866,7 +942,8 @@ export default function App() {
     );
 
     // 2. Persist to Supabase — Realtime will propagate to ALL other devices
-    const { error } = await updateProductStock(targetProduct.id, nextAvailable);
+    const sellerId = user?.id || targetProduct.seller_id || targetProduct.sellerId;
+    const { error } = await updateProductStock(targetProduct.id, nextAvailable, sellerId);
 
     if (error) {
       // 3. Rollback optimistic update on failure
@@ -1011,10 +1088,7 @@ export default function App() {
 
   // Filtered approved products for public marketplace (Strictly approved items only)
   // Excludes recycled, pending, rejected products AND products from vendors without active subscriptions
-  const publicApprovedProducts = (() => {
-    // Get all subscription records for fast lookup
-    const allSubs = getAllSubscriptionsSync();
-
+  const publicApprovedProducts = useMemo(() => {
     return products.filter((p) => {
       // Basic eligibility checks
       if ((p.status || 'approved') !== 'approved') return false;
@@ -1022,16 +1096,20 @@ export default function App() {
 
       // Subscription check: find the vendor's subscription
       const sellerId = p.sellerId;
-      if (!sellerId) return true; // legacy/seed products always visible
+      if (!sellerId) return false; // Listings without a registered seller are blocked
 
-      // Seed/mock products (non-UUID IDs) bypass subscription check
-      const isSeedProduct = !sellerId || sellerId.startsWith('farmer-') || sellerId.startsWith('mock-');
-      if (isSeedProduct) return true;
+      const sellerUUID = mapToSellerUUID(sellerId);
+      // Check subscription record by direct sellerId or mapped UUID
+      const sub = allSubscriptions[sellerId] || (sellerUUID ? allSubscriptions[sellerUUID] : null);
 
-      const sub = allSubs[sellerId];
-      return isSubscriptionActive(sub);
+      // Strictly enforce active subscription on the storefront
+      if (!sub || !isSubscriptionActive(sub)) {
+        return false;
+      }
+
+      return true;
     });
-  })();
+  }, [products, allSubscriptions]);
 
   return (
     <div className="app-container">
@@ -1043,6 +1121,12 @@ export default function App() {
       {/* ── Normal app shell (only when NOT on the reset-password page) ── */}
       {currentPage !== 'reset-password' && (
         <>
+          {/* PWA Network Offline / Reconnection Banner */}
+          <PWAOfflineNotice />
+
+          {/* PWA App Update Available Toast */}
+          <PWAUpdateToast />
+
           {/* Toast Notification Container */}
           <div className="toast-fixed-wrapper">
             <Toast
@@ -1059,6 +1143,7 @@ export default function App() {
             initialMode={authMode}
             initialRole={authInitialRole}
             onClose={() => setAuthModalOpen(false)}
+            onNavigate={handleNavigate}
             onSuccess={(newUser) => {
               setUser(newUser);
               showToast(`Welcome to Benue Market, ${newUser.name}!`, 'success');
@@ -1094,6 +1179,7 @@ export default function App() {
             onNavigate={handleNavigate}
             onOpenAuth={(mode) => handleOpenAuth(mode, 'buyer')}
             onOpenFarmerOnboarding={() => setFarmerOnboardingOpen(true)}
+            onOpenInstallApp={() => setPwaModalOpen(true)}
             onSignOut={handleRequestSignOut}
           />
 
@@ -1210,13 +1296,25 @@ export default function App() {
               <AboutPage onNavigate={handleNavigate} />
             )}
 
-            {currentPage === 'contact' && (
-              <ContactPage />
+            {(currentPage === 'contact' || currentPage === 'support') && (
+              <ContactPage
+                currentUser={user}
+                onNavigate={handleNavigate}
+                onOpenAuth={handleOpenAuth}
+                pageParams={pageParams}
+              />
+            )}
+
+            {(currentPage === 'terms' || currentPage === 'terms-and-conditions') && (
+              <TermsPage onNavigate={handleNavigate} />
             )}
           </main>
 
           {/* Global Footer */}
-          <Footer onNavigate={handleNavigate} />
+          <Footer
+            onNavigate={handleNavigate}
+            onOpenInstallApp={() => setPwaModalOpen(true)}
+          />
 
           {/* Mobile Bottom Navigation */}
           <MobileBottomNav
@@ -1236,11 +1334,11 @@ export default function App() {
             currentSubscription={currentSubscription}
             initialPlan={selectedPlanForModal}
             onSubscribed={({ planId, reference }) => {
-              const sub = getVendorSubscriptionSync(user?.id);
+              const freshSubs = getAllSubscriptionsSync();
+              setAllSubscriptions(freshSubs);
+              const sub = (user?.id && freshSubs[user.id]) ? freshSubs[user.id] : getVendorSubscriptionSync(user?.id);
               setCurrentSubscription(sub);
-              setSubscriptionModalOpen(false);
-              setSelectedPlanForModal(null);
-              showToast('Subscription activated! Your products are now visible on the marketplace.', 'success');
+              showToast('Subscription active! Your produce listings are live on the marketplace.', 'success');
               loadAllProducts();
             }}
           />
@@ -1251,6 +1349,12 @@ export default function App() {
             onClose={() => setFarmerOnboardingOpen(false)}
             currentUser={user}
             onComplete={handleUpgradeToSeller}
+          />
+
+          {/* PWA Mobile Installation Prompt & iOS Guide */}
+          <PWAInstallBanner
+            forceOpen={pwaModalOpen}
+            onClose={() => setPwaModalOpen(false)}
           />
         </>
       )}

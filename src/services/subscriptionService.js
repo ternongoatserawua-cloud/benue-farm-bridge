@@ -11,6 +11,7 @@
  */
 
 import { supabase, isSupabaseConfigured } from '../lib/supabase.js';
+import { mapToSellerUUID } from './authService.js';
 
 // ─── Default plan catalogue (admin-editable) ────────────────────────────────
 const PLANS_STORAGE_KEY = 'benue_market_subscription_plans';
@@ -121,10 +122,11 @@ export async function getVendorSubscription(vendorId) {
   // 1. Try Supabase first
   if (isSupabaseConfigured() && supabase) {
     try {
+      const targetUUID = mapToSellerUUID(vendorId) || vendorId;
       const { data, error } = await supabase
         .from('profiles')
         .select('subscription_plan, subscription_started_at, subscription_expires_at, subscription_status, subscription_payment_ref')
-        .eq('id', vendorId)
+        .eq('id', targetUUID)
         .maybeSingle();
 
       if (!error && data?.subscription_plan) {
@@ -249,6 +251,7 @@ export async function activateSubscription(vendorId, planId, paymentRef = '', is
   // 1. Persist to Supabase
   if (isSupabaseConfigured() && supabase) {
     try {
+      const targetUUID = mapToSellerUUID(vendorId) || vendorId;
       const { error } = await supabase
         .from('profiles')
         .update({
@@ -259,7 +262,7 @@ export async function activateSubscription(vendorId, planId, paymentRef = '', is
           subscription_payment_ref: paymentRef || 'demo-payment',
           updated_at: now.toISOString()
         })
-        .eq('id', vendorId);
+        .eq('id', targetUUID);
 
       if (error) {
         console.warn('Supabase subscription update notice:', error.message);
@@ -376,9 +379,10 @@ export async function revokeSubscription(vendorId, callerRole = 'admin') {
   }
 
   // Strategy 1: Attempt RPC admin_revoke_subscription
+  const targetUUID = mapToSellerUUID(vendorId) || vendorId;
   try {
     const { data: rpcData, error: rpcError } = await supabase.rpc('admin_revoke_subscription', {
-      p_user_id: vendorId
+      p_user_id: targetUUID
     });
     if (!rpcError && rpcData?.success) {
       return { error: null };
@@ -397,7 +401,7 @@ export async function revokeSubscription(vendorId, callerRole = 'admin') {
         subscription_expires_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
       })
-      .eq('id', vendorId);
+      .eq('id', targetUUID);
 
     if (dbError) throw dbError;
     return { error: null };
@@ -420,8 +424,9 @@ export async function adminSetSubscription(vendorId, planId, durationDays = 30) 
   if (isSupabaseConfigured() && supabase) {
     // Strategy 1: Attempt RPC admin_grant_subscription
     try {
+      const targetUUID = mapToSellerUUID(vendorId) || vendorId;
       const { data: rpcData, error: rpcError } = await supabase.rpc('admin_grant_subscription', {
-        p_user_id: vendorId,
+        p_user_id: targetUUID,
         p_plan_id: planId,
         p_duration_days: durationDays
       });
@@ -554,18 +559,22 @@ export async function syncAllSubscriptionsFromSupabase() {
 export function initPaystackPayment({ key, email, amount, ref, metadata = {}, onSuccess, onClose }) {
   return new Promise((resolve) => {
     const cleanKey = (key || '').trim();
-    const cleanEmail = (email || '').trim();
+    let cleanEmail = (email || '').trim();
+    // Validate email format: Paystack rejects transactions without a valid RFC 5322 email
+    if (!cleanEmail || !cleanEmail.includes('@') || !cleanEmail.includes('.')) {
+      cleanEmail = `farmer_${(ref || Date.now()).toString().replace(/[^a-zA-Z0-9]/g, '').slice(-8)}@benuemarket.ng`;
+    }
     const intAmountKobo = Math.round(Number(amount));
     const cleanRef = (ref || '').trim();
 
     if (!cleanKey) {
-      resolve({ success: false, error: 'Paystack Public Key is missing.' });
+      resolve({ success: false, error: 'Paystack Public Key is missing or not configured.' });
       return;
     }
 
     const load = () => {
       try {
-        if (window.PaystackPop) {
+        if (window.PaystackPop && typeof window.PaystackPop.setup === 'function') {
           const handler = window.PaystackPop.setup({
             key: cleanKey,
             email: cleanEmail,
@@ -591,14 +600,23 @@ export function initPaystackPayment({ key, email, amount, ref, metadata = {}, on
       }
     };
 
-    if (window.PaystackPop) {
+    if (window.PaystackPop && typeof window.PaystackPop.setup === 'function') {
       load();
     } else {
-      const script = document.createElement('script');
-      script.src = 'https://js.paystack.co/v1/inline.js';
-      script.onload = load;
-      script.onerror = () => resolve({ success: false, error: 'Failed to load Paystack payment script from CDN.' });
-      document.head.appendChild(script);
+      const existingScript = document.querySelector('script[src*="paystack.co/v1/inline.js"]');
+      if (existingScript) {
+        existingScript.addEventListener('load', load);
+        existingScript.addEventListener('error', () => resolve({ success: false, error: 'Failed to load Paystack payment script from CDN.' }));
+        // If already loaded
+        if (window.PaystackPop) load();
+      } else {
+        const script = document.createElement('script');
+        script.src = 'https://js.paystack.co/v1/inline.js';
+        script.async = true;
+        script.onload = load;
+        script.onerror = () => resolve({ success: false, error: 'Failed to load Paystack payment script from CDN. Please check network connection.' });
+        document.head.appendChild(script);
+      }
     }
   });
 }

@@ -20,7 +20,10 @@ const VALID_PAGES = new Set([
   'profile',
   'about',
   'contact',
-  'reset-password'
+  'support',
+  'reset-password',
+  'terms',
+  'terms-and-conditions'
 ]);
 
 // Protected pages that require authenticated roles and should NEVER be auto-restored on cold visits

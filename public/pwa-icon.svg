@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <defs>
+    <linearGradient id="pwaBgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#16a34a" />
+      <stop offset="60%" stop-color="#15803d" />
+      <stop offset="100%" stop-color="#064e3b" />
+    </linearGradient>
+    <linearGradient id="pwaGoldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#fbbf24" />
+      <stop offset="100%" stop-color="#d97706" />
+    </linearGradient>
+    <linearGradient id="pwaBlueGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38bdf8" />
+      <stop offset="100%" stop-color="#0284c7" />
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#000000" flood-opacity="0.25" />
+    </filter>
+  </defs>
+
+  <!-- Background with subtle bevel -->
+  <rect width="512" height="512" rx="112" fill="url(#pwaBgGrad)" />
+  <rect x="8" y="8" width="496" height="496" rx="104" stroke="url(#pwaGoldGrad)" stroke-width="6" fill="none" opacity="0.75" />
+
+  <!-- Benue River flowing curves -->
+  <path d="M70 340 Q 180 280, 260 325 T 442 300" stroke="url(#pwaBlueGrad)" stroke-width="26" stroke-linecap="round" fill="none" filter="url(#shadow)" />
+  <path d="M100 375 Q 195 330, 275 365 T 415 345" stroke="url(#pwaBlueGrad)" stroke-width="12" stroke-linecap="round" fill="none" opacity="0.6" />
+
+  <!-- Agricultural Golden Sprout Leaf -->
+  <path d="M256 300 C256 185, 140 145, 140 145 C140 145, 165 260, 256 300 Z" fill="url(#pwaGoldGrad)" filter="url(#shadow)" />
+
+  <!-- Crisp White Partner Leaf -->
+  <path d="M256 300 C256 160, 372 110, 372 110 C372 110, 360 250, 256 300 Z" fill="#ffffff" filter="url(#shadow)" />
+
+  <!-- Golden Sun / Harvest Seed -->
+  <circle cx="256" cy="110" r="26" fill="#fbbf24" filter="url(#shadow)" />
+  <circle cx="256" cy="110" r="16" fill="#fef08a" />
+</svg>

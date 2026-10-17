@@ -1,7 +1,7 @@
 import React from 'react';
-import { MapPin, Phone, Mail, ShieldCheck, Heart } from 'lucide-react';
+import { MapPin, Phone, Mail, ShieldCheck, Heart, Smartphone } from 'lucide-react';
 
-export default function Footer({ onNavigate = () => {} }) {
+export default function Footer({ onNavigate = () => {}, onOpenInstallApp = () => {} }) {
   const currentYear = new Date().getFullYear();
 
   const handleLinkClick = (e, pageId) => {
@@ -43,6 +43,19 @@ export default function Footer({ onNavigate = () => {} }) {
               <li><a href="#sell" onClick={(e) => handleLinkClick(e, 'sell')}>Sell Produce</a></li>
               <li><a href="#about" onClick={(e) => handleLinkClick(e, 'about')}>About Platform</a></li>
               <li><a href="#contact" onClick={(e) => handleLinkClick(e, 'contact')}>Contact &amp; FAQ</a></li>
+              <li><a href="#terms" onClick={(e) => handleLinkClick(e, 'terms')}>Terms &amp; Conditions</a></li>
+              <li>
+                <a
+                  href="#install"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    if (typeof onOpenInstallApp === 'function') onOpenInstallApp();
+                  }}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', color: 'var(--color-primary-600)', fontWeight: '600' }}
+                >
+                  <Smartphone size={14} /> Install Mobile App
+                </a>
+              </li>
             </ul>
           </div>
 
@@ -80,7 +93,14 @@ export default function Footer({ onNavigate = () => {} }) {
         {/* Footer Bottom Bar */}
         <div className="footer-bottom">
           <p className="footer-copyright">
-            &copy; {currentYear} Benue Farm Bridge. All rights reserved. Connect. Trade. Grow.
+            &copy; {currentYear} Benue Farm Bridge. All rights reserved. &bull;{' '}
+            <a
+              href="#terms"
+              onClick={(e) => handleLinkClick(e, 'terms')}
+              style={{ color: 'inherit', textDecoration: 'underline' }}
+            >
+              Terms &amp; Conditions
+            </a>
           </p>
           <div className="footer-note">
             <span>Built with pride for Benue farmers &amp; Nigerian agribusiness</span>

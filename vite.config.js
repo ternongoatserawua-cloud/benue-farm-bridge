@@ -56,9 +56,9 @@ function paystackApiPlugin() {
               const currentEnv = getDynamicEnv();
               const parsed = JSON.parse(body || '{}');
 
-              // Validate vendorId is UUID format
-              const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-              if (parsed.vendorId && !uuidRegex.test(parsed.vendorId)) {
+              // Validate vendorId is UUID format or mock user identifier
+              const isUUIDOrMock = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(parsed.vendorId) || /^[a-z0-9_-]{1,64}$/i.test(parsed.vendorId);
+              if (parsed.vendorId && !isUUIDOrMock) {
                 res.statusCode = 400;
                 res.setHeader('Content-Type', 'application/json');
                 res.end(JSON.stringify({ success: false, error: 'Invalid vendor ID format.' }));
@@ -70,9 +70,10 @@ function paystackApiPlugin() {
               res.setHeader('Content-Type', 'application/json');
               res.end(JSON.stringify(result.body));
             } catch (err) {
+              console.error('[vite-verify-payment-error]', err);
               res.statusCode = 500;
               res.setHeader('Content-Type', 'application/json');
-              res.end(JSON.stringify({ success: false, error: 'Internal server error.' }));
+              res.end(JSON.stringify({ success: false, error: err.message || 'Internal server error.' }));
             }
           });
           return;

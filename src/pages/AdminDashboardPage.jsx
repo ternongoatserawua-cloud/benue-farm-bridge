@@ -34,7 +34,13 @@ import {
   AtSign,
   Hash,
   ExternalLink,
-  X
+  X,
+  RefreshCw,
+  AlertCircle,
+  CalendarClock,
+  SlidersHorizontal,
+  Sparkles,
+  SearchCheck
 } from 'lucide-react';
 import Button from '../components/common/Button.jsx';
 import Badge from '../components/common/Badge.jsx';
@@ -65,7 +71,11 @@ import {
   adminSetSubscription,
   revokeSubscription,
   computeSubscriptionStatus,
-  daysUntilExpiry
+  daysUntilExpiry,
+  syncAllSubscriptionsFromSupabase,
+  getProductLimit,
+  isSubscriptionActive,
+  getVendorSubscription
 } from '../services/subscriptionService.js';
 
 export default function AdminDashboardPage({
@@ -122,6 +132,15 @@ export default function AdminDashboardPage({
   const [allVendorSubs, setAllVendorSubs] = useState(() => getAllSubscriptionsSync());
   const [grantSubUser, setGrantSubUser] = useState(null);
   const [grantSubPlanId, setGrantSubPlanId] = useState('starter');
+
+  // Subscription Search, Filter & Inspector State
+  const [subSearchQuery, setSubSearchQuery] = useState('');
+  const [subStatusFilter, setSubStatusFilter] = useState('all'); // 'all' | 'active' | 'expiring_soon' | 'expired'
+  const [subPlanFilter, setSubPlanFilter] = useState('all'); // 'all' | 'starter' | 'growth'
+  const [isSyncingSubs, setIsSyncingSubs] = useState(false);
+  const [inspectorQuery, setInspectorQuery] = useState('');
+  const [inspectedUser, setInspectedUser] = useState(null);
+  const [isInspecting, setIsInspecting] = useState(false);
 
   // Modals State
   const [recycleModalProduct, setRecycleModalProduct] = useState(null);
@@ -193,6 +212,15 @@ export default function AdminDashboardPage({
     loadUsers();
   }, []);
 
+  // Sync subscriptions from Supabase when switching to subscriptions tab
+  useEffect(() => {
+    if (activeTab === 'subscriptions') {
+      syncAllSubscriptionsFromSupabase().then((subs) => {
+        if (subs) setAllVendorSubs(subs);
+      });
+    }
+  }, [activeTab]);
+
   const safeProducts = Array.isArray(allProducts) ? allProducts.filter(Boolean) : [];
   const safeUsers = Array.isArray(usersList) ? usersList.filter(Boolean) : [];
 
@@ -242,9 +270,20 @@ export default function AdminDashboardPage({
     }
     if (userStatusFilter !== 'all' && (u.status || 'active') !== userStatusFilter) return false;
     if (userSubFilter !== 'all') {
-      const hasActiveSub = Boolean(u.subscriptionPlan && u.subscriptionStatus !== 'cancelled' && u.subscriptionStatus !== 'expired');
+      const hasActiveSub = Boolean(
+        u.subscriptionPlan &&
+        u.subscriptionStatus !== 'cancelled' &&
+        u.subscriptionStatus !== 'expired' &&
+        (!u.subscriptionExpiresAt || new Date(u.subscriptionExpiresAt).getTime() > Date.now())
+      );
+      const isExpiredSub = Boolean(
+        u.subscriptionStatus === 'expired' ||
+        u.subscriptionStatus === 'cancelled' ||
+        (u.subscriptionExpiresAt && new Date(u.subscriptionExpiresAt).getTime() <= Date.now())
+      );
       if (userSubFilter === 'active_sub' && !hasActiveSub) return false;
-      if (userSubFilter === 'free_sub' && hasActiveSub) return false;
+      if (userSubFilter === 'expired_sub' && !isExpiredSub) return false;
+      if (userSubFilter === 'free_sub' && (hasActiveSub || isExpiredSub)) return false;
     }
     if (userSearchQuery.trim()) {
       const q = userSearchQuery.toLowerCase().trim();
@@ -254,16 +293,255 @@ export default function AdminDashboardPage({
       if (userSearchField === 'email') {
         return u.email?.toLowerCase().includes(q);
       }
-      // 'all': search across ID, Email, Name, Phone, and LGA
+      // 'all': search across ID, Email, Name, Phone, LGA, Plan, and Subscription status
       const idMatch = u.id?.toLowerCase().includes(q);
       const emailMatch = u.email?.toLowerCase().includes(q);
       const nameMatch = u.name?.toLowerCase().includes(q);
       const phoneMatch = u.phone?.toLowerCase().includes(q);
       const lgaMatch = u.lga?.toLowerCase().includes(q);
-      return idMatch || emailMatch || nameMatch || phoneMatch || lgaMatch;
+      const planMatch = u.subscriptionPlan?.toLowerCase().includes(q);
+      const subStatusMatch = (u.subscriptionStatus || '').toLowerCase().includes(q);
+      return idMatch || emailMatch || nameMatch || phoneMatch || lgaMatch || planMatch || subStatusMatch;
     }
     return true;
   });
+
+  // ── Helper: Detailed subscription expiration calculator ──────────────────
+  const getSubscriptionExpiryDetails = (sub) => {
+    if (!sub || !sub.expiresAt) {
+      return {
+        status: 'none',
+        formattedExpiry: '—',
+        relativeText: 'No expiration date set',
+        daysLeft: 0,
+        hoursLeft: 0,
+        isExpired: true
+      };
+    }
+
+    const expiryTime = new Date(sub.expiresAt).getTime();
+    const now = Date.now();
+    const diffMs = expiryTime - now;
+    const isExpired = diffMs <= 0;
+
+    const totalDays = Math.ceil(Math.abs(diffMs) / (1000 * 60 * 60 * 24));
+    const totalHours = Math.floor(Math.abs(diffMs) / (1000 * 60 * 60));
+
+    const formattedDate = new Date(sub.expiresAt).toLocaleString('en-NG', {
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+
+    if (isExpired) {
+      return {
+        status: 'expired',
+        formattedExpiry: formattedDate,
+        relativeText: totalDays === 0 ? 'Expired today' : `Expired ${totalDays} day${totalDays === 1 ? '' : 's'} ago`,
+        daysLeft: 0,
+        hoursLeft: 0,
+        isExpired: true
+      };
+    }
+
+    const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000;
+    const isExpiringSoon = diffMs <= THREE_DAYS_MS;
+
+    return {
+      status: isExpiringSoon ? 'expiring_soon' : 'active',
+      formattedExpiry: formattedDate,
+      relativeText: totalDays <= 1 ? `Expires in ${totalHours} hour${totalHours === 1 ? '' : 's'}` : `Expires in ${totalDays} day${totalDays === 1 ? '' : 's'}`,
+      daysLeft: totalDays,
+      hoursLeft: totalHours,
+      isExpired: false
+    };
+  };
+
+  // ── Enriched subscriptions list merged with safeUsers profile context ──────
+  const enrichedVendorSubs = React.useMemo(() => {
+    const map = new Map();
+
+    // 1. Add records from allVendorSubs
+    Object.values(allVendorSubs).forEach(sub => {
+      if (!sub || !sub.vendorId) return;
+      map.set(sub.vendorId, { ...sub });
+    });
+
+    // 2. Also check safeUsers for any user with subscriptionPlan
+    safeUsers.forEach(u => {
+      if (u.subscriptionPlan) {
+        const existing = map.get(u.id);
+        if (!existing) {
+          map.set(u.id, {
+            vendorId: u.id,
+            planId: u.subscriptionPlan,
+            expiresAt: u.subscriptionExpiresAt,
+            status: u.subscriptionStatus || 'active',
+            paymentRef: ''
+          });
+        } else if (!existing.expiresAt && u.subscriptionExpiresAt) {
+          existing.expiresAt = u.subscriptionExpiresAt;
+        }
+      }
+    });
+
+    // 3. Map user profile details (name, email, phone, location)
+    return Array.from(map.values()).map(sub => {
+      const userProfile = safeUsers.find(u => u.id === sub.vendorId || u.email === sub.vendorId);
+      const expiryDetails = getSubscriptionExpiryDetails(sub);
+      const planObj = subPlans.find(p => p.id === sub.planId);
+      const activeProductsCount = safeProducts.filter(p =>
+        (p.sellerId === sub.vendorId || p.seller === userProfile?.name) &&
+        p.status === 'approved' && p.status !== 'recycled'
+      ).length;
+
+      return {
+        ...sub,
+        userName: userProfile?.name || 'Benue Vendor',
+        userEmail: userProfile?.email || '',
+        userPhone: userProfile?.phone || '',
+        userRole: userProfile?.role || 'farmer',
+        userLocation: userProfile?.lga ? `${userProfile.lga}, Benue` : (userProfile?.location || 'Benue'),
+        expiryDetails,
+        planName: planObj?.name || (sub.planId ? sub.planId.toUpperCase() : 'Starter'),
+        planPrice: planObj?.price || (sub.planId === 'growth' ? 5000 : 2000),
+        maxProducts: planObj?.maxProducts || (sub.planId === 'growth' ? 10 : 3),
+        activeProductsCount
+      };
+    });
+  }, [allVendorSubs, safeUsers, subPlans, safeProducts]);
+
+  // ── Filtered vendor subscriptions matching search query & filters ──────────
+  const filteredVendorSubs = React.useMemo(() => {
+    return enrichedVendorSubs.filter(item => {
+      // 1. Status Filter
+      if (subStatusFilter !== 'all') {
+        if (subStatusFilter === 'active' && item.expiryDetails.status !== 'active') return false;
+        if (subStatusFilter === 'expiring_soon' && item.expiryDetails.status !== 'expiring_soon') return false;
+        if (subStatusFilter === 'expired' && item.expiryDetails.status !== 'expired') return false;
+      }
+
+      // 2. Plan Filter
+      if (subPlanFilter !== 'all' && item.planId !== subPlanFilter) {
+        return false;
+      }
+
+      // 3. Search Query Filter
+      if (subSearchQuery.trim()) {
+        const q = subSearchQuery.toLowerCase().trim();
+        const matchId = (item.vendorId || '').toLowerCase().includes(q);
+        const matchName = (item.userName || '').toLowerCase().includes(q);
+        const matchEmail = (item.userEmail || '').toLowerCase().includes(q);
+        const matchPhone = (item.userPhone || '').toLowerCase().includes(q);
+        const matchPlan = (item.planName || '').toLowerCase().includes(q);
+        const matchRef = (item.paymentRef || '').toLowerCase().includes(q);
+        return matchId || matchName || matchEmail || matchPhone || matchPlan || matchRef;
+      }
+
+      return true;
+    });
+  }, [enrichedVendorSubs, subStatusFilter, subPlanFilter, subSearchQuery]);
+
+  // ── Handler: Synchronize subscriptions from Supabase ──────────────────────
+  const handleRefreshSubscriptions = async () => {
+    setIsSyncingSubs(true);
+    try {
+      const freshSubs = await syncAllSubscriptionsFromSupabase();
+      if (freshSubs) setAllVendorSubs(freshSubs);
+      await loadUsers();
+      showToast('Vendor subscriptions synchronized with Supabase.', 'success');
+    } catch (err) {
+      showToast(`Sync error: ${err.message}`, 'error');
+    } finally {
+      setIsSyncingSubs(false);
+    }
+  };
+
+  // ── Handler: Quick user subscription inspector lookup ─────────────────────
+  const handleInspectSubscription = async (queryToSearch = null) => {
+    const q = (queryToSearch || inspectorQuery || '').trim();
+    if (!q) {
+      setInspectedUser(null);
+      return;
+    }
+    setIsInspecting(true);
+    try {
+      const qLower = q.toLowerCase();
+      // 1. Check in safeUsers
+      let matchedUser = safeUsers.find(
+        (u) => u.id?.toLowerCase() === qLower || u.email?.toLowerCase() === qLower || u.name?.toLowerCase().includes(qLower)
+      );
+
+      // 2. If not found in safeUsers, search in Supabase
+      if (!matchedUser) {
+        const { data: dbUsers } = await searchUsersInDatabase({ query: q, searchBy: 'all' });
+        if (dbUsers && dbUsers.length > 0) {
+          matchedUser = dbUsers[0];
+        }
+      }
+
+      if (!matchedUser) {
+        showToast(`No user found matching "${q}".`, 'error');
+        setInspectedUser(null);
+        return;
+      }
+
+      // 3. Fetch latest subscription for this vendor from Supabase
+      const sub = await getVendorSubscription(matchedUser.id);
+      const expiryDetails = getSubscriptionExpiryDetails(sub || {
+        planId: matchedUser.subscriptionPlan,
+        expiresAt: matchedUser.subscriptionExpiresAt,
+        status: matchedUser.subscriptionStatus
+      });
+
+      const planObj = subPlans.find((p) => p.id === (sub?.planId || matchedUser.subscriptionPlan));
+      const activeProductsCount = safeProducts.filter(
+        (p) =>
+          (p.sellerId === matchedUser.id || p.seller === matchedUser.name) &&
+          p.status === 'approved' &&
+          p.status !== 'recycled'
+      ).length;
+
+      setInspectedUser({
+        user: matchedUser,
+        subscription: sub,
+        expiryDetails,
+        planObj,
+        activeProductsCount
+      });
+      showToast(`Subscription details loaded for ${matchedUser.name}.`, 'info');
+    } catch (err) {
+      showToast(`Lookup notice: ${err.message}`, 'error');
+    } finally {
+      setIsInspecting(false);
+    }
+  };
+
+  // ── Handler: Extend vendor subscription by 30 days ────────────────────────
+  const handleExtendSubscription = async (vendorId, planId, durationDays = 30) => {
+    if (!vendorId || !planId) return;
+    setActionLoading(true);
+    try {
+      const { error } = await adminSetSubscription(vendorId, planId, durationDays);
+      if (error) {
+        showToast(`Failed to extend subscription: ${error}`, 'error');
+        return;
+      }
+      const freshSubs = await syncAllSubscriptionsFromSupabase();
+      if (freshSubs) setAllVendorSubs(freshSubs);
+      await loadUsers();
+      if (inspectedUser?.user?.id === vendorId) {
+        handleInspectSubscription(vendorId);
+      }
+      showToast(`Subscription extended by ${durationDays} days successfully!`, 'success');
+    } catch (err) {
+      showToast(`Extend error: ${err.message}`, 'error');
+    } finally {
+      setActionLoading(false);
+    }
+  };
 
   const totalDual = safeUsers.filter((u) => u.role === 'buyer/farmer').length;
   const totalFarmers = safeUsers.filter((u) => u.role === 'farmer' || u.role === 'seller' || u.role === 'buyer/farmer').length;
@@ -621,10 +899,19 @@ export default function AdminDashboardPage({
             <button
               type="button"
               className={`admin-tab-btn ${activeTab === 'subscriptions' ? 'active' : ''}`}
-              onClick={() => { setActiveTab('subscriptions'); setAllVendorSubs(getAllSubscriptionsSync()); }}
+              onClick={() => {
+                setActiveTab('subscriptions');
+                setAllVendorSubs(getAllSubscriptionsSync());
+                syncAllSubscriptionsFromSupabase().then((subs) => {
+                  if (subs) setAllVendorSubs(subs);
+                });
+              }}
             >
               <CreditCard size={16} />
               <span>Subscriptions</span>
+              <span className="admin-tab-count-badge" style={{ backgroundColor: '#f0fdf4', color: '#166534' }}>
+                {Object.keys(allVendorSubs).length}
+              </span>
             </button>
           </div>
 
@@ -1120,6 +1407,7 @@ export default function AdminDashboardPage({
                 >
                   <option value="all">All Subscriptions</option>
                   <option value="active_sub">Active Subscriptions ({totalWithSubs})</option>
+                  <option value="expired_sub">Expired Subscriptions</option>
                   <option value="free_sub">Standard Free</option>
                 </select>
               </div>
@@ -1281,38 +1569,61 @@ export default function AdminDashboardPage({
                             </td>
                             <td>
                               {hasActiveSub ? (
-                                <div className="flex items-center gap-1.5 flex-wrap">
-                                  <Badge variant="accent">
-                                    <Crown size={11} /> {u.subscriptionPlan}
-                                  </Badge>
-                                  {canModerate && (
-                                    <button
-                                      type="button"
-                                      className="btn btn-ghost btn-xs text-danger"
-                                      onClick={() => setRevokeSubModalUser(u)}
-                                      title="Revoke active subscription"
-                                      style={{ padding: '2px 6px', fontSize: '11px' }}
-                                    >
-                                      Revoke
-                                    </button>
+                                <div>
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    <Badge variant={u.subscriptionPlan === 'growth' ? 'accent' : 'success'}>
+                                      <Crown size={11} /> {u.subscriptionPlan}
+                                    </Badge>
+                                    {canModerate && (
+                                      <button
+                                        type="button"
+                                        className="btn btn-ghost btn-xs text-danger"
+                                        onClick={() => setRevokeSubModalUser(u)}
+                                        title="Revoke active subscription"
+                                        style={{ padding: '2px 6px', fontSize: '11px' }}
+                                      >
+                                        Revoke
+                                      </button>
+                                    )}
+                                  </div>
+                                  {u.subscriptionExpiresAt ? (
+                                    <div style={{ fontSize: '11px', color: 'var(--color-slate-500)', marginTop: '3px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                      <Clock size={11} style={{ color: daysUntilExpiry({ expiresAt: u.subscriptionExpiresAt }) <= 3 ? '#b45309' : '#16a34a' }} />
+                                      <span>
+                                        Expires: <strong>{new Date(u.subscriptionExpiresAt).toLocaleDateString('en-NG', { day: 'numeric', month: 'short', year: 'numeric' })}</strong>
+                                        {' '}({daysUntilExpiry({ expiresAt: u.subscriptionExpiresAt })}d left)
+                                      </span>
+                                    </div>
+                                  ) : (
+                                    <div style={{ fontSize: '10.5px', color: 'var(--color-slate-400)', marginTop: '2px' }}>
+                                      Active (No expiry set)
+                                    </div>
                                   )}
                                 </div>
                               ) : (
-                                <div className="flex items-center gap-1.5 flex-wrap">
-                                  <span style={{ fontSize: '12px', color: 'var(--color-slate-400)' }}>Free</span>
-                                  {canModerate && (
-                                    <button
-                                      type="button"
-                                      className="btn btn-ghost btn-xs text-primary"
-                                      onClick={() => {
-                                        setGrantSubModalUser(u);
-                                        setGrantSubModalPlanId('starter');
-                                      }}
-                                      title="Grant a subscription plan to this user"
-                                      style={{ padding: '2px 6px', fontSize: '11px' }}
-                                    >
-                                      + Grant
-                                    </button>
+                                <div>
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    <span style={{ fontSize: '12px', color: 'var(--color-slate-400)', fontWeight: '600' }}>Free</span>
+                                    {canModerate && (
+                                      <button
+                                        type="button"
+                                        className="btn btn-ghost btn-xs text-primary"
+                                        onClick={() => {
+                                          setGrantSubModalUser(u);
+                                          setGrantSubModalPlanId('starter');
+                                        }}
+                                        title="Grant a subscription plan to this user"
+                                        style={{ padding: '2px 6px', fontSize: '11px' }}
+                                      >
+                                        + Grant
+                                      </button>
+                                    )}
+                                  </div>
+                                  {u.subscriptionExpiresAt && (
+                                    <div style={{ fontSize: '11px', color: '#b91c1c', marginTop: '3px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                      <AlertCircle size={11} />
+                                      <span>Expired: {new Date(u.subscriptionExpiresAt).toLocaleDateString('en-NG', { day: 'numeric', month: 'short', year: 'numeric' })}</span>
+                                    </div>
                                   )}
                                 </div>
                               )}
@@ -2005,28 +2316,270 @@ export default function AdminDashboardPage({
               </p>
             </div>
 
-            {/* ── Vendor Subscription Table ── */}
+            {/* ── Vendor Subscriptions Management & Search ── */}
             <div>
-              <h3 style={{ margin: '0 0 4px', fontSize: '1rem', fontWeight: '800', color: 'var(--color-slate-900)', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <Users size={18} style={{ color: '#16a34a' }} /> Vendor Subscriptions
-              </h3>
-              <p style={{ margin: '0 0 16px', fontSize: '13px', color: 'var(--color-slate-500)' }}>Manage individual vendor subscription status. Grant subscriptions for testing or special arrangements.</p>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px', marginBottom: '16px' }}>
+                <div>
+                  <h3 style={{ margin: '0 0 4px', fontSize: '1.1rem', fontWeight: '800', color: 'var(--color-slate-900)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <Users size={18} style={{ color: '#16a34a' }} /> Vendor Subscriptions &amp; Expiry Management
+                  </h3>
+                  <p style={{ margin: 0, fontSize: '13px', color: 'var(--color-slate-500)' }}>
+                    Search and inspect any vendor&apos;s subscription state, check expiration countdowns, and grant or extend access.
+                  </p>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  icon={isSyncingSubs ? Loader2 : RefreshCw}
+                  disabled={isSyncingSubs}
+                  onClick={handleRefreshSubscriptions}
+                  title="Synchronize all subscriptions with Supabase database"
+                >
+                  {isSyncingSubs ? 'Syncing DB...' : 'Sync with Supabase'}
+                </Button>
+              </div>
 
-              {/* Grant Subscription */}
+              {/* ── QUICK USER SUBSCRIPTION INSPECTOR / SEARCH CARD ── */}
+              <div style={{
+                padding: '20px', borderRadius: '16px', background: 'linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%)',
+                border: '1.5px solid #e2e8f0', marginBottom: '24px', boxShadow: '0 2px 8px rgba(0,0,0,0.04)'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <div style={{ width: '28px', height: '28px', borderRadius: '8px', background: '#16a34a', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <Search size={15} />
+                    </div>
+                    <span style={{ fontSize: '14px', fontWeight: '800', color: 'var(--color-slate-800)' }}>
+                      Quick Subscription &amp; Expiry Inspector
+                    </span>
+                  </div>
+                  <span style={{ fontSize: '12px', color: 'var(--color-slate-500)' }}>
+                    Look up any farmer or buyer by User ID, Email, or Name
+                  </span>
+                </div>
+
+                <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                  <div style={{ flex: 1, minWidth: '260px', position: 'relative' }}>
+                    <Search size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--color-slate-400)' }} />
+                    <input
+                      type="text"
+                      placeholder="Enter user ID (e.g. 274cd848-...) or vendor email..."
+                      value={inspectorQuery}
+                      onChange={(e) => setInspectorQuery(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') handleInspectSubscription();
+                      }}
+                      style={{
+                        width: '100%', padding: '10px 36px 10px 36px', borderRadius: '10px',
+                        border: '1.5px solid #cbd5e1', fontSize: '13.5px', background: '#fff',
+                        boxSizing: 'border-box'
+                      }}
+                    />
+                    {inspectorQuery && (
+                      <button
+                        type="button"
+                        onClick={() => { setInspectorQuery(''); setInspectedUser(null); }}
+                        style={{
+                          position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)',
+                          background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-slate-400)'
+                        }}
+                      >
+                        <X size={15} />
+                      </button>
+                    )}
+                  </div>
+                  <Button
+                    variant="primary"
+                    icon={isInspecting ? Loader2 : SearchCheck}
+                    disabled={isInspecting || !inspectorQuery.trim()}
+                    onClick={() => handleInspectSubscription()}
+                  >
+                    {isInspecting ? 'Inspecting...' : 'Inspect User Subscription'}
+                  </Button>
+                </div>
+
+                {/* Inspected User Result Card */}
+                {inspectedUser && (
+                  <div style={{
+                    marginTop: '16px', padding: '16px 20px', borderRadius: '12px', background: '#fff',
+                    border: '1.5px solid #bbf7d0', boxShadow: '0 4px 12px rgba(22,163,74,0.08)',
+                    animation: 'adminSectionFadeIn 0.3s ease'
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px', flexWrap: 'wrap', gap: '10px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                        <div className="admin-user-avatar" style={{ width: '42px', height: '42px', fontSize: '16px' }}>
+                          {inspectedUser.user?.name?.charAt(0).toUpperCase() || 'U'}
+                        </div>
+                        <div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <strong style={{ fontSize: '15px', color: 'var(--color-slate-900)' }}>{inspectedUser.user?.name}</strong>
+                            <Badge variant={inspectedUser.user?.role === 'farmer' ? 'success' : 'category'}>
+                              {inspectedUser.user?.role}
+                            </Badge>
+                            {inspectedUser.user?.verified && (
+                              <span style={{ fontSize: '11px', color: '#16a34a', fontWeight: '700', display: 'flex', alignItems: 'center', gap: '3px' }}>
+                                <ShieldCheck size={12} /> Verified
+                              </span>
+                            )}
+                          </div>
+                          <div style={{ fontSize: '12px', color: 'var(--color-slate-500)', display: 'flex', alignItems: 'center', gap: '12px', marginTop: '2px', flexWrap: 'wrap' }}>
+                            <span>{inspectedUser.user?.email}</span>
+                            {inspectedUser.user?.phone && <span>· {inspectedUser.user?.phone}</span>}
+                            <span>· {inspectedUser.user?.lga || inspectedUser.user?.location || 'Benue'}</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <button
+                          type="button"
+                          className="btn btn-ghost btn-xs text-muted"
+                          onClick={() => setInspectedUser(null)}
+                          title="Close inspector"
+                        >
+                          <X size={14} /> Close
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Subscription Diagnostic Metrics */}
+                    <div style={{
+                      display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+                      gap: '12px', padding: '14px', borderRadius: '10px',
+                      background: inspectedUser.expiryDetails.status === 'active' ? '#f0fdf4' :
+                                  inspectedUser.expiryDetails.status === 'expiring_soon' ? '#fffbeb' :
+                                  inspectedUser.expiryDetails.status === 'expired' ? '#fef2f2' : '#f8fafc',
+                      border: `1px solid ${
+                        inspectedUser.expiryDetails.status === 'active' ? '#bbf7d0' :
+                        inspectedUser.expiryDetails.status === 'expiring_soon' ? '#fef3c7' :
+                        inspectedUser.expiryDetails.status === 'expired' ? '#fecaca' : '#e2e8f0'
+                      }`,
+                      marginBottom: '14px'
+                    }}>
+                      <div>
+                        <span style={{ fontSize: '11px', fontWeight: '700', color: 'var(--color-slate-500)', textTransform: 'uppercase', display: 'block' }}>Subscription State</span>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '4px' }}>
+                          <span style={{
+                            fontSize: '13px', fontWeight: '800',
+                            color: inspectedUser.expiryDetails.status === 'active' ? '#15803d' :
+                                   inspectedUser.expiryDetails.status === 'expiring_soon' ? '#b45309' :
+                                   inspectedUser.expiryDetails.status === 'expired' ? '#b91c1c' : '#64748b'
+                          }}>
+                            {inspectedUser.expiryDetails.status === 'active' ? '● Active Subscription' :
+                             inspectedUser.expiryDetails.status === 'expiring_soon' ? '▲ Expiring Soon' :
+                             inspectedUser.expiryDetails.status === 'expired' ? '✕ Expired' : 'Standard Free'}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div>
+                        <span style={{ fontSize: '11px', fontWeight: '700', color: 'var(--color-slate-500)', textTransform: 'uppercase', display: 'block' }}>Plan &amp; Tier</span>
+                        <div style={{ fontSize: '13px', fontWeight: '800', color: 'var(--color-slate-900)', marginTop: '4px', textTransform: 'capitalize' }}>
+                          {inspectedUser.subscription?.planId ? `${inspectedUser.subscription.planId} (${formatNaira(inspectedUser.planObj?.price || 2000)}/mo)` : 'None (Free Tier)'}
+                        </div>
+                      </div>
+
+                      <div>
+                        <span style={{ fontSize: '11px', fontWeight: '700', color: 'var(--color-slate-500)', textTransform: 'uppercase', display: 'block' }}>Expiration Date</span>
+                        <div style={{ fontSize: '13px', fontWeight: '800', color: 'var(--color-slate-900)', marginTop: '4px' }}>
+                          {inspectedUser.expiryDetails.formattedExpiry}
+                        </div>
+                      </div>
+
+                      <div>
+                        <span style={{ fontSize: '11px', fontWeight: '700', color: 'var(--color-slate-500)', textTransform: 'uppercase', display: 'block' }}>Countdown / Time Left</span>
+                        <div style={{ fontSize: '13px', fontWeight: '800', marginTop: '4px', color: inspectedUser.expiryDetails.status === 'active' ? '#15803d' : inspectedUser.expiryDetails.status === 'expiring_soon' ? '#b45309' : '#b91c1c' }}>
+                          {inspectedUser.expiryDetails.relativeText}
+                        </div>
+                      </div>
+
+                      <div>
+                        <span style={{ fontSize: '11px', fontWeight: '700', color: 'var(--color-slate-500)', textTransform: 'uppercase', display: 'block' }}>Storefront Visibility</span>
+                        <div style={{ fontSize: '13px', fontWeight: '700', color: 'var(--color-slate-800)', marginTop: '4px' }}>
+                          {inspectedUser.activeProductsCount} of {inspectedUser.planObj?.maxProducts || 0} listings active
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Quick Admin Actions for this user */}
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
+                      <div className="admin-user-id-pill" title={`User ID: ${inspectedUser.user?.id}`}>
+                        <span className="admin-user-id-prefix">UUID:</span>
+                        <span className="admin-user-id-val">{inspectedUser.user?.id}</span>
+                        <button
+                          type="button"
+                          className="btn-copy-tag"
+                          onClick={() => handleCopy(inspectedUser.user?.id, `${inspectedUser.user?.id}-insp`)}
+                        >
+                          {copiedKey === `${inspectedUser.user?.id}-insp` ? <Check size={10} style={{ color: '#16a34a' }} /> : <Copy size={10} />}
+                        </button>
+                      </div>
+
+                      <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                        {inspectedUser.subscription?.planId ? (
+                          <>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              icon={Clock}
+                              disabled={actionLoading}
+                              onClick={() => handleExtendSubscription(inspectedUser.user?.id, inspectedUser.subscription.planId, 30)}
+                            >
+                              Extend +30 Days
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              icon={Zap}
+                              onClick={() => {
+                                setGrantSubModalUser(inspectedUser.user);
+                                setGrantSubModalPlanId(inspectedUser.subscription.planId === 'starter' ? 'growth' : 'starter');
+                              }}
+                            >
+                              Change Plan
+                            </Button>
+                            <Button
+                              variant="danger"
+                              size="sm"
+                              onClick={() => setRevokeSubModalUser(inspectedUser.user)}
+                            >
+                              Revoke Plan
+                            </Button>
+                          </>
+                        ) : (
+                          <Button
+                            variant="primary"
+                            size="sm"
+                            icon={ShieldCheck}
+                            onClick={() => {
+                              setGrantSubModalUser(inspectedUser.user);
+                              setGrantSubModalPlanId('starter');
+                            }}
+                          >
+                            Grant Subscription Plan
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Grant Subscription Accordion / Card */}
               <div style={{ padding: '16px 20px', borderRadius: '12px', background: '#f8fafc', border: '1px solid #e2e8f0', marginBottom: '20px' }}>
                 <h4 style={{ margin: '0 0 12px', fontSize: '13px', fontWeight: '700', color: 'var(--color-slate-700)' }}>Grant Subscription to a Vendor</h4>
                 <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
-                  <div style={{ flex: 2, minWidth: '200px' }}>
-                    <label style={{ display: 'block', fontSize: '11px', fontWeight: '600', color: 'var(--color-slate-500)', marginBottom: '4px' }}>Vendor User ID (from User Directory)</label>
+                  <div style={{ flex: 2, minWidth: '220px' }}>
+                    <label style={{ display: 'block', fontSize: '11px', fontWeight: '600', color: 'var(--color-slate-500)', marginBottom: '4px' }}>Vendor User ID or Select Farmer</label>
                     <input
                       type="text"
-                      placeholder="Paste vendor user ID..."
+                      placeholder="Paste vendor user ID or UUID..."
                       value={grantSubUser || ''}
                       onChange={e => setGrantSubUser(e.target.value)}
                       style={{ width: '100%', padding: '8px 12px', borderRadius: '8px', border: '1.5px solid #e2e8f0', fontSize: '13px', boxSizing: 'border-box' }}
                     />
                   </div>
-                  <div style={{ flex: 1, minWidth: '130px' }}>
+                  <div style={{ flex: 1, minWidth: '140px' }}>
                     <label style={{ display: 'block', fontSize: '11px', fontWeight: '600', color: 'var(--color-slate-500)', marginBottom: '4px' }}>Plan</label>
                     <select
                       value={grantSubPlanId}
@@ -2040,87 +2593,254 @@ export default function AdminDashboardPage({
                     variant="primary"
                     size="sm"
                     icon={ShieldCheck}
-                    disabled={!grantSubUser?.trim()}
+                    disabled={!grantSubUser?.trim() || actionLoading}
                     onClick={async () => {
                       if (!grantSubUser?.trim()) return;
                       await adminSetSubscription(grantSubUser.trim(), grantSubPlanId);
-                      setAllVendorSubs(getAllSubscriptionsSync());
+                      const freshSubs = await syncAllSubscriptionsFromSupabase();
+                      if (freshSubs) setAllVendorSubs(freshSubs);
+                      await loadUsers();
                       setGrantSubUser('');
+                      showToast(`Granted ${grantSubPlanId.toUpperCase()} subscription.`, 'success');
                     }}
                   >
-                    Grant
+                    Grant Plan
                   </Button>
                 </div>
               </div>
 
-              {/* Subscriptions table */}
-              {Object.keys(allVendorSubs).length === 0 ? (
-                <div style={{ textAlign: 'center', padding: '40px', color: 'var(--color-slate-400)', fontSize: '14px' }}>
-                  No vendor subscriptions recorded yet.
+              {/* ── SEARCH & FILTER CONTROLS FOR SUBSCRIPTIONS TABLE ── */}
+              <div className="admin-controls-bar flex items-center justify-between gap-3 flex-wrap" style={{ marginBottom: '14px' }}>
+                <div className="input-with-icon admin-search-input flex-1" style={{ position: 'relative', minWidth: '260px' }}>
+                  <Search size={16} className="input-icon" />
+                  <input
+                    type="text"
+                    className="form-control"
+                    placeholder="Search subscriptions by User ID, Name, Email, or Ref..."
+                    value={subSearchQuery}
+                    onChange={(e) => setSubSearchQuery(e.target.value)}
+                  />
+                  {subSearchQuery && (
+                    <button
+                      type="button"
+                      className="btn-icon-clear"
+                      onClick={() => setSubSearchQuery('')}
+                      title="Clear search"
+                      style={{
+                        position: 'absolute', right: '8px', top: '50%', transform: 'translateY(-50%)',
+                        background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--color-slate-400)', padding: '4px'
+                      }}
+                    >
+                      <X size={14} />
+                    </button>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-2 admin-controls-filters flex-wrap">
+                  <select
+                    className="form-control admin-select-filter"
+                    value={subStatusFilter}
+                    onChange={(e) => setSubStatusFilter(e.target.value)}
+                    style={{ minWidth: '150px' }}
+                  >
+                    <option value="all">All Statuses ({enrichedVendorSubs.length})</option>
+                    <option value="active">Active (Valid)</option>
+                    <option value="expiring_soon">Expiring Soon (≤3d)</option>
+                    <option value="expired">Expired</option>
+                  </select>
+
+                  <select
+                    className="form-control admin-select-filter"
+                    value={subPlanFilter}
+                    onChange={(e) => setSubPlanFilter(e.target.value)}
+                    style={{ minWidth: '130px' }}
+                  >
+                    <option value="all">All Plans</option>
+                    <option value="starter">Starter Plan</option>
+                    <option value="growth">Growth Plan</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Search feedback bar */}
+              {subSearchQuery.trim() && (
+                <div className="admin-search-status-bar" style={{ marginBottom: '14px' }}>
+                  <span className="flex items-center gap-2">
+                    <Search size={14} />
+                    Found <strong>{filteredVendorSubs.length}</strong> subscription{filteredVendorSubs.length === 1 ? '' : 's'} matching &ldquo;{subSearchQuery}&rdquo;.
+                  </span>
+                  <button
+                    type="button"
+                    className="text-xs text-muted underline"
+                    style={{ background: 'none', border: 'none', cursor: 'pointer' }}
+                    onClick={() => setSubSearchQuery('')}
+                  >
+                    Reset Filter
+                  </button>
+                </div>
+              )}
+
+              {/* Enhanced Subscriptions Table */}
+              {filteredVendorSubs.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '50px 20px', background: '#fff', borderRadius: '12px', border: '1px solid #e2e8f0', color: 'var(--color-slate-400)' }}>
+                  <Search size={32} style={{ margin: '0 auto 10px', opacity: 0.4 }} />
+                  <div style={{ fontSize: '15px', fontWeight: '700', color: 'var(--color-slate-700)', marginBottom: '4px' }}>
+                    {subSearchQuery ? `No subscriptions matching "${subSearchQuery}"` : 'No vendor subscriptions recorded'}
+                  </div>
+                  <p style={{ fontSize: '13px', margin: 0 }}>
+                    {subSearchQuery ? 'Try clearing your search query or changing status filters.' : 'Grant a subscription above to activate a vendor.'}
+                  </p>
                 </div>
               ) : (
-                <div style={{ overflowX: 'auto' }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
-                    <thead>
-                      <tr style={{ background: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
-                        <th style={{ textAlign: 'left', padding: '10px 12px', fontWeight: '700', color: 'var(--color-slate-600)' }}>Vendor ID</th>
-                        <th style={{ textAlign: 'left', padding: '10px 12px', fontWeight: '700', color: 'var(--color-slate-600)' }}>Plan</th>
-                        <th style={{ textAlign: 'left', padding: '10px 12px', fontWeight: '700', color: 'var(--color-slate-600)' }}>Expires</th>
-                        <th style={{ textAlign: 'left', padding: '10px 12px', fontWeight: '700', color: 'var(--color-slate-600)' }}>Status</th>
-                        <th style={{ textAlign: 'left', padding: '10px 12px', fontWeight: '700', color: 'var(--color-slate-600)' }}>Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {Object.values(allVendorSubs).map((sub) => {
-                        const status = computeSubscriptionStatus(sub);
-                        const days = daysUntilExpiry(sub);
-                        const statusColors = {
-                          active: { bg: '#f0fdf4', color: '#15803d', text: 'Active' },
-                          expiring_soon: { bg: '#fffbeb', color: '#b45309', text: `Expiring in ${days}d` },
-                          expired: { bg: '#fef2f2', color: '#b91c1c', text: 'Expired' },
-                          none: { bg: '#f8fafc', color: '#64748b', text: 'None' }
-                        };
-                        const sc = statusColors[status] || statusColors.none;
-                        return (
-                          <tr key={sub.vendorId} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                            <td style={{ padding: '10px 12px', fontFamily: 'monospace', fontSize: '11px', color: 'var(--color-slate-600)', maxWidth: '140px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                              {sub.vendorId}
-                            </td>
-                            <td style={{ padding: '10px 12px', fontWeight: '700', textTransform: 'capitalize' }}>{sub.planId}</td>
-                            <td style={{ padding: '10px 12px', color: 'var(--color-slate-600)' }}>
-                              {sub.expiresAt ? new Date(sub.expiresAt).toLocaleDateString('en-NG', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'}
-                            </td>
-                            <td style={{ padding: '10px 12px' }}>
-                              <span style={{ padding: '3px 10px', borderRadius: '20px', background: sc.bg, color: sc.color, fontWeight: '700', fontSize: '11px' }}>
-                                {sc.text}
-                              </span>
-                            </td>
-                            <td style={{ padding: '10px 12px' }}>
-                              <button
-                                style={{
-                                  padding: '4px 10px', borderRadius: '6px', border: '1px solid #fecaca',
-                                  background: '#fef2f2', color: '#b91c1c', fontSize: '11px', fontWeight: '600',
-                                  cursor: 'pointer'
-                                }}
-                                onClick={() => {
-                                  const matchingUser = safeUsers.find((u) => u.id === sub.vendorId);
-                                  setRevokeSubModalUser({
-                                    id: sub.vendorId,
-                                    name: matchingUser?.name || sub.vendorId,
-                                    email: matchingUser?.email || '',
-                                    subscriptionPlan: sub.planId,
-                                    subscriptionExpiresAt: sub.expiresAt
-                                  });
-                                }}
-                              >
-                                Revoke
-                              </button>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
+                <div className="admin-table-container card">
+                  <div className="table-responsive">
+                    <table className="admin-data-table">
+                      <thead>
+                        <tr>
+                          <th>Vendor Profile &amp; ID</th>
+                          <th>Plan &amp; Limit</th>
+                          <th>Subscription Expiration</th>
+                          <th>Status &amp; Countdown</th>
+                          <th>Payment Ref</th>
+                          <th className="text-right">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredVendorSubs.map((sub) => {
+                          const ed = sub.expiryDetails;
+                          const isExpiringSoon = ed.status === 'expiring_soon';
+                          const isExpired = ed.status === 'expired';
+
+                          return (
+                            <tr key={sub.vendorId}>
+                              {/* 1. Vendor Profile */}
+                              <td>
+                                <div className="flex items-center gap-3">
+                                  <div className="admin-user-avatar">
+                                    {sub.userName?.charAt(0).toUpperCase() || 'V'}
+                                  </div>
+                                  <div style={{ minWidth: 0 }}>
+                                    <strong className="admin-table-title flex items-center gap-1">
+                                      {sub.userName}
+                                      <Badge variant={sub.userRole === 'farmer' ? 'success' : 'category'} style={{ fontSize: '10px', padding: '1px 6px' }}>
+                                        {sub.userRole}
+                                      </Badge>
+                                    </strong>
+                                    {sub.userEmail && (
+                                      <div style={{ fontSize: '12px', color: 'var(--color-slate-500)', marginBottom: '3px' }}>
+                                        {sub.userEmail}
+                                      </div>
+                                    )}
+                                    <div className="admin-user-id-pill" title={`User ID: ${sub.vendorId}`}>
+                                      <span className="admin-user-id-prefix">ID:</span>
+                                      <span className="admin-user-id-val">{sub.vendorId}</span>
+                                      <button
+                                        type="button"
+                                        className="btn-copy-tag"
+                                        onClick={() => handleCopy(sub.vendorId, `${sub.vendorId}-subid`)}
+                                        title="Copy Vendor ID"
+                                      >
+                                        {copiedKey === `${sub.vendorId}-subid` ? <Check size={10} style={{ color: '#16a34a' }} /> : <Copy size={10} />}
+                                      </button>
+                                    </div>
+                                  </div>
+                                </div>
+                              </td>
+
+                              {/* 2. Plan */}
+                              <td>
+                                <div>
+                                  <Badge variant={sub.planId === 'growth' ? 'accent' : 'success'}>
+                                    <Crown size={11} /> {sub.planName}
+                                  </Badge>
+                                  <div style={{ fontSize: '11px', color: 'var(--color-slate-500)', marginTop: '4px' }}>
+                                    {formatNaira(sub.planPrice)}/mo · Up to {sub.maxProducts} listings
+                                  </div>
+                                  <div style={{ fontSize: '11px', color: 'var(--color-slate-400)', marginTop: '1px' }}>
+                                    {sub.activeProductsCount} currently active
+                                  </div>
+                                </div>
+                              </td>
+
+                              {/* 3. Subscription Expiration */}
+                              <td>
+                                <div>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '13px', fontWeight: '700', color: isExpired ? '#b91c1c' : 'var(--color-slate-800)' }}>
+                                    <CalendarClock size={14} style={{ color: isExpired ? '#b91c1c' : isExpiringSoon ? '#b45309' : '#16a34a' }} />
+                                    <span>{ed.formattedExpiry}</span>
+                                  </div>
+                                  {sub.startedAt && (
+                                    <div style={{ fontSize: '11px', color: 'var(--color-slate-400)', marginTop: '3px' }}>
+                                      Started: {new Date(sub.startedAt).toLocaleDateString('en-NG', { day: 'numeric', month: 'short', year: 'numeric' })}
+                                    </div>
+                                  )}
+                                </div>
+                              </td>
+
+                              {/* 4. Status & Countdown */}
+                              <td>
+                                <div>
+                                  <span style={{
+                                    display: 'inline-flex', alignItems: 'center', gap: '5px',
+                                    padding: '4px 10px', borderRadius: '20px', fontSize: '11.5px', fontWeight: '700',
+                                    background: isExpired ? '#fef2f2' : isExpiringSoon ? '#fffbeb' : '#f0fdf4',
+                                    color: isExpired ? '#b91c1c' : isExpiringSoon ? '#b45309' : '#15803d',
+                                    border: `1px solid ${isExpired ? '#fecaca' : isExpiringSoon ? '#fef3c7' : '#bbf7d0'}`
+                                  }}>
+                                    {isExpired ? <AlertCircle size={12} /> : isExpiringSoon ? <Clock size={12} /> : <CheckCircle2 size={12} />}
+                                    {ed.relativeText}
+                                  </span>
+                                </div>
+                              </td>
+
+                              {/* 5. Payment Ref */}
+                              <td>
+                                <span style={{ fontFamily: 'monospace', fontSize: '11px', color: 'var(--color-slate-600)' }}>
+                                  {sub.paymentRef || '—'}
+                                </span>
+                              </td>
+
+                              {/* 6. Actions */}
+                              <td className="text-right">
+                                <div style={{ display: 'inline-flex', gap: '6px', alignItems: 'center' }}>
+                                  <button
+                                    type="button"
+                                    className="btn btn-ghost btn-xs text-primary"
+                                    onClick={() => handleExtendSubscription(sub.vendorId, sub.planId, 30)}
+                                    disabled={actionLoading}
+                                    title="Extend subscription by 30 days"
+                                    style={{ padding: '3px 8px', fontSize: '11px', fontWeight: '600', border: '1px solid #bae6fd', borderRadius: '6px' }}
+                                  >
+                                    +30d
+                                  </button>
+                                  <button
+                                    type="button"
+                                    style={{
+                                      padding: '3px 8px', borderRadius: '6px', border: '1px solid #fecaca',
+                                      background: '#fef2f2', color: '#b91c1c', fontSize: '11px', fontWeight: '600',
+                                      cursor: 'pointer'
+                                    }}
+                                    onClick={() => {
+                                      const matchingUser = safeUsers.find((u) => u.id === sub.vendorId);
+                                      setRevokeSubModalUser({
+                                        id: sub.vendorId,
+                                        name: matchingUser?.name || sub.userName || sub.vendorId,
+                                        email: matchingUser?.email || sub.userEmail || '',
+                                        subscriptionPlan: sub.planId,
+                                        subscriptionExpiresAt: sub.expiresAt
+                                      });
+                                    }}
+                                  >
+                                    Revoke
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               )}
             </div>

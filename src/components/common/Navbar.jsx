@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Menu, X, PlusCircle, User, LogIn, LogOut, Sprout, LayoutDashboard, ShieldCheck, ChevronDown, Bookmark } from 'lucide-react';
+import { Menu, X, PlusCircle, User, LogIn, LogOut, Sprout, LayoutDashboard, ShieldCheck, ChevronDown, Bookmark, Smartphone, Headphones } from 'lucide-react';
 import Button from './Button.jsx';
 
 export default function Navbar({
@@ -11,6 +11,7 @@ export default function Navbar({
   onNavigate = () => {},
   onOpenAuth = () => {},
   onOpenFarmerOnboarding = () => {},
+  onOpenInstallApp = () => {},
   onSignOut = () => {}
 }) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -33,7 +34,8 @@ export default function Navbar({
     { id: 'browse', label: 'Browse Produce' },
     { id: 'farmers', label: 'Farmers' },
     { id: 'sell', label: 'Sell Produce' },
-    { id: 'about', label: 'About' }
+    { id: 'about', label: 'About' },
+    { id: 'contact', label: 'Support' }
   ];
 
   const handleNavClick = (pageId) => {
@@ -235,6 +237,37 @@ export default function Navbar({
                         </button>
                       )}
 
+                      <button
+                        type="button"
+                        className="profile-dropdown-item"
+                        onClick={() => {
+                          setProfileDropdownOpen(false);
+                          if (typeof onOpenInstallApp === 'function') {
+                            onOpenInstallApp();
+                          }
+                        }}
+                        role="menuitem"
+                      >
+                        <Smartphone size={16} className="dropdown-item-icon" />
+                        <div className="dropdown-item-text">
+                          <span className="dropdown-item-title">Install Mobile App</span>
+                          <span className="dropdown-item-sub">Add to home screen for offline access</span>
+                        </div>
+                      </button>
+
+                      <button
+                        type="button"
+                        className="profile-dropdown-item"
+                        onClick={() => handleNavClick('contact')}
+                        role="menuitem"
+                      >
+                        <Headphones size={16} className="dropdown-item-icon" />
+                        <div className="dropdown-item-text">
+                          <span className="dropdown-item-title">Help & Support Desk</span>
+                          <span className="dropdown-item-sub">Direct WhatsApp, hotlines & tickets</span>
+                        </div>
+                      </button>
+
                       <div className="profile-dropdown-divider" />
 
                       <button
@@ -361,6 +394,21 @@ export default function Navbar({
                 Login / Register
               </Button>
             )}
+
+            <Button
+              variant="outline"
+              fullWidth
+              icon={Smartphone}
+              onClick={() => {
+                setMobileMenuOpen(false);
+                if (typeof onOpenInstallApp === 'function') {
+                  onOpenInstallApp();
+                }
+              }}
+              style={{ borderColor: 'var(--color-primary-600)', color: 'var(--color-primary-700)' }}
+            >
+              Install Mobile App
+            </Button>
 
             <Button
               variant="primary"

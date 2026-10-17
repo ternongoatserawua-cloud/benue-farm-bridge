@@ -203,5 +203,204 @@ export const MOCK_PRODUCTS = [
     available: true,
     featured: false,
     description: 'Disease-resistant, well-fed local Benue brown bucks and does. Vaccinated and in prime condition for breeding or meat supply.'
+  },
+  {
+    id: 'prod-10',
+    name: 'Export Quality White Sesame Seeds (Benniseed)',
+    category: 'grains-cereals',
+    price: 185000,
+    unit: '100kg bag',
+    quantity: 110,
+    minimumOrder: 2,
+    location: 'Tse-Agberagba',
+    lga: 'Konshisha',
+    seller: 'Konshisha Organic Seed Producers',
+    sellerId: 'farmer-1',
+    phone: '08031234567',
+    whatsapp: '2348031234567',
+    image: 'https://images.unsplash.com/photo-1508746829417-e6f548d8d6ed?auto=format&fit=crop&w=800&q=80',
+    images: [
+      'https://images.unsplash.com/photo-1508746829417-e6f548d8d6ed?auto=format&fit=crop&w=800&q=80'
+    ],
+    available: true,
+    featured: true,
+    description: 'Premium machine-cleaned natural white sesame seeds cultivated in the fertile plains of Konshisha. 99.5% purity level, perfect for confectionery and oil extraction.'
+  },
+  {
+    id: 'prod-11',
+    name: 'Fresh Orange-Fleshed Sweet Potatoes (OFSP)',
+    category: 'tubers-roots',
+    price: 12000,
+    unit: '50kg bag',
+    quantity: 95,
+    minimumOrder: 2,
+    location: 'Yandev Farm Settlement',
+    lga: 'Gboko',
+    seller: 'Aondoana Agro Enterprises',
+    sellerId: 'farmer-2',
+    phone: '08149876543',
+    whatsapp: '2348149876543',
+    image: 'https://images.unsplash.com/photo-1596040033229-a9821ebd058d?auto=format&fit=crop&w=800&q=80',
+    images: [
+      'https://images.unsplash.com/photo-1596040033229-a9821ebd058d?auto=format&fit=crop&w=800&q=80'
+    ],
+    available: true,
+    featured: false,
+    description: 'Nutrient-packed, biofortified Vitamin A-rich orange-fleshed sweet potatoes freshly dug from sandy-loam soils in Gboko.'
+  },
+  {
+    id: 'prod-12',
+    name: 'Unadulterated Virgin Red Palm Oil',
+    category: 'processed',
+    price: 38000,
+    unit: '25L jerrycan',
+    quantity: 140,
+    minimumOrder: 1,
+    location: 'Orokam Agro Market',
+    lga: 'Ogbadibo',
+    seller: 'Ochanya Agro Ventures',
+    sellerId: 'farmer-6',
+    phone: '09087654321',
+    whatsapp: '2349087654321',
+    image: 'https://images.unsplash.com/photo-1474979266404-7eaacbcd87c5?auto=format&fit=crop&w=800&q=80',
+    images: [
+      'https://images.unsplash.com/photo-1474979266404-7eaacbcd87c5?auto=format&fit=crop&w=800&q=80'
+    ],
+    available: true,
+    featured: true,
+    description: 'Traditional slow-pressed virgin red palm oil with rich aroma and natural beta-carotene content. Completely free of chemical coloring or paraffin additives.'
+  },
+  {
+    id: 'prod-13',
+    name: 'Fresh Giant Agbagba Plantain Bunches',
+    category: 'fruits',
+    price: 4500,
+    unit: 'bunch',
+    quantity: 180,
+    minimumOrder: 5,
+    location: 'Adoka Agro Hub',
+    lga: 'Otukpo',
+    seller: 'Ochanya Agro Ventures',
+    sellerId: 'farmer-6',
+    phone: '09087654321',
+    whatsapp: '2349087654321',
+    image: 'https://images.unsplash.com/photo-1528825871115-3581a5387919?auto=format&fit=crop&w=800&q=80',
+    images: [
+      'https://images.unsplash.com/photo-1528825871115-3581a5387919?auto=format&fit=crop&w=800&q=80'
+    ],
+    available: true,
+    featured: false,
+    description: 'Heavyweight green plantain bunches harvested at maturity. Ideal for long transit to Lagos, Abuja, and Port Harcourt wholesale markets or commercial dodo/chips processing.'
+  },
+  {
+    id: 'prod-14',
+    name: 'Sun-Dried Aromatic Ginger Splits',
+    category: 'vegetables',
+    price: 75000,
+    unit: '40kg bag',
+    quantity: 60,
+    minimumOrder: 2,
+    location: 'Lessel Market',
+    lga: 'Ushongo',
+    seller: 'Ter Farms & Agro Allied',
+    sellerId: 'farmer-1',
+    phone: '08031234567',
+    whatsapp: '2348031234567',
+    image: 'https://images.unsplash.com/photo-1615485290382-441e4d049cb5?auto=format&fit=crop&w=800&q=80',
+    images: [
+      'https://images.unsplash.com/photo-1615485290382-441e4d049cb5?auto=format&fit=crop&w=800&q=80'
+    ],
+    available: true,
+    featured: false,
+    description: 'Pungent, deeply fragrant sun-dried ginger root splits from Ushongo hills. Low moisture content, pristine export standard for spices and beverage blending.'
+  },
+  {
+    id: 'prod-15',
+    name: 'Pure Raw Forest Blossom Honey',
+    category: 'processed',
+    price: 15000,
+    unit: '4L gallon',
+    quantity: 50,
+    minimumOrder: 1,
+    location: 'Naka Forest Boundary',
+    lga: 'Gwer West',
+    seller: 'Benue Valley Mills',
+    sellerId: 'farmer-3',
+    phone: '07056789012',
+    whatsapp: '2347056789012',
+    image: 'https://images.unsplash.com/photo-1587049352846-4a222e784d38?auto=format&fit=crop&w=800&q=80',
+    images: [
+      'https://images.unsplash.com/photo-1587049352846-4a222e784d38?auto=format&fit=crop&w=800&q=80'
+    ],
+    available: true,
+    featured: true,
+    description: '100% natural wild-harvested honey from flowering trees along the Gwer West forest belts. Unpasteurized, unfiltered, rich in enzymes with deep amber tint.'
+  },
+  {
+    id: 'prod-16',
+    name: 'Dry High-Yield Yellow Maize Grain',
+    category: 'grains-cereals',
+    price: 52000,
+    unit: '100kg bag',
+    quantity: 220,
+    minimumOrder: 5,
+    location: 'Wannune Central',
+    lga: 'Tarka',
+    seller: 'Tor-Gwer Organic Produce',
+    sellerId: 'farmer-4',
+    phone: '08023456789',
+    whatsapp: '2348023456789',
+    image: 'https://images.unsplash.com/photo-1551754655-cd27e38d2076?auto=format&fit=crop&w=800&q=80',
+    images: [
+      'https://images.unsplash.com/photo-1551754655-cd27e38d2076?auto=format&fit=crop&w=800&q=80'
+    ],
+    available: true,
+    featured: false,
+    description: 'Weevil-free, well-threshed yellow corn suitable for animal feed compounding, corn flour milling, and wholesale grain storage.'
+  },
+  {
+    id: 'prod-17',
+    name: 'Raw Premium Cashew Nuts in Shell',
+    category: 'fruits',
+    price: 92000,
+    unit: '80kg bag',
+    quantity: 75,
+    minimumOrder: 3,
+    location: 'Igumale Plantation Basin',
+    lga: 'Ado',
+    seller: 'Tiv Valley Orchards',
+    sellerId: 'farmer-7',
+    phone: '08098761234',
+    whatsapp: '2348098761234',
+    image: 'https://images.unsplash.com/photo-1509358271058-acd22cc93898?auto=format&fit=crop&w=800&q=80',
+    images: [
+      'https://images.unsplash.com/photo-1509358271058-acd22cc93898?auto=format&fit=crop&w=800&q=80'
+    ],
+    available: true,
+    featured: false,
+    description: 'High Outturn Rate (KOR 48+) raw cashew nuts harvested from mature orchards in Ado LGA. Sun-dried to optimum moisture for export and industrial processing.'
+  },
+  {
+    id: 'prod-18',
+    name: 'Smoked River Benue Traditional Mudfish',
+    category: 'fish-aquaculture',
+    price: 26000,
+    unit: 'medium carton',
+    quantity: 45,
+    minimumOrder: 1,
+    location: 'Obagaji Riverbank',
+    lga: 'Agatu',
+    seller: 'Benue River Fishery Co-op',
+    sellerId: 'farmer-8',
+    phone: '08065432198',
+    whatsapp: '2348065432198',
+    image: 'https://images.unsplash.com/photo-1544551763-46a013bb70d5?auto=format&fit=crop&w=800&q=80',
+    images: [
+      'https://images.unsplash.com/photo-1544551763-46a013bb70d5?auto=format&fit=crop&w=800&q=80'
+    ],
+    available: true,
+    featured: true,
+    description: 'Carefully hardwood-smoked river mudfish prepared with traditional Tiv and Agatu methods. Bone-dry, long shelf life, authentic smoky soup aroma.'
   }
 ];
+

@@ -3,10 +3,79 @@ import { MOCK_PRODUCTS } from '../data/mockProducts.js';
 import { getPersistedProfileOverrides } from './authService.js';
 import { normalizeCategory } from '../data/categories.js';
 import { compressFileForUpload, compressDataUrlForDatabase } from '../utils/imageCompressor.js';
+import { getAllSubscriptionsSync, isSubscriptionActive } from './subscriptionService.js';
 
 const STORAGE_KEY = 'benue_market_persisted_products';
 const DELETED_IDS_STORAGE_KEY = 'benue_market_deleted_product_ids';
 const BROADCAST_CHANNEL_NAME = 'benue_market_products_sync';
+export const PRODUCT_STOCK_OVERRIDES_KEY = 'benue_market_product_stock_overrides';
+
+/**
+ * Retrieve active local stock availability overrides.
+ * Overrides ensure vendor availability toggles survive page reloads even before DB sync completes.
+ */
+export function getProductStockOverrides() {
+  if (typeof window === 'undefined') return {};
+  try {
+    const raw = localStorage.getItem(PRODUCT_STOCK_OVERRIDES_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') return parsed;
+    }
+  } catch {}
+  return {};
+}
+
+/**
+ * Save stock overrides map to localStorage.
+ */
+export function saveProductStockOverrides(overrides) {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(PRODUCT_STOCK_OVERRIDES_KEY, JSON.stringify(overrides || {}));
+  } catch {}
+}
+
+/**
+ * Record a local stock override for a product.
+ */
+export function setProductStockOverride(productId, available) {
+  if (typeof window === 'undefined' || !productId) return;
+  try {
+    const overrides = getProductStockOverrides();
+    const now = Date.now();
+    const isAvail = Boolean(available);
+    overrides[productId] = { available: isAvail, updatedAt: now };
+    const mapped = mapToProductUUID(productId);
+    if (mapped && mapped !== productId) {
+      overrides[mapped] = { available: isAvail, updatedAt: now };
+    }
+    saveProductStockOverrides(overrides);
+  } catch {}
+}
+
+/**
+ * Clear a confirmed stock override once DB updated_at supersedes it.
+ */
+export function removeProductStockOverride(productId) {
+  if (typeof window === 'undefined' || !productId) return;
+  try {
+    const overrides = getProductStockOverrides();
+    let modified = false;
+    if (overrides[productId]) {
+      delete overrides[productId];
+      modified = true;
+    }
+    const mapped = mapToProductUUID(productId);
+    if (mapped && overrides[mapped]) {
+      delete overrides[mapped];
+      modified = true;
+    }
+    if (modified) {
+      saveProductStockOverrides(overrides);
+    }
+  } catch {}
+}
 
 /**
  * Retrieve set of permanently deleted product IDs.
@@ -259,6 +328,22 @@ export function updateProductsSellerProfile(sellerId, sellerName, updates) {
  */
 export function formatProductRow(row) {
   if (!row) return null;
+  const canonicalId = mapToProductUUID(row.id);
+  const overrides = getProductStockOverrides();
+  const override = overrides[row.id] || overrides[canonicalId];
+
+  let isAvailable = row.available !== false;
+  if (override !== undefined) {
+    const rowUpdatedAt = row.updated_at ? new Date(row.updated_at).getTime() : 0;
+    // If the local override timestamp is >= DB updated_at, local override wins
+    if ((override.updatedAt || 0) >= rowUpdatedAt) {
+      isAvailable = Boolean(override.available);
+    } else {
+      // The DB updated_at is newer than local override, DB has authoritative status
+      removeProductStockOverride(row.id);
+    }
+  }
+
   const rawProduct = {
     id: row.id,
     name: row.name,
@@ -277,7 +362,7 @@ export function formatProductRow(row) {
     whatsapp: row.whatsapp || row.profiles?.phone || '2348031234567',
     image: row.image_url || (row.images && row.images[0]) || '',
     images: row.images && row.images.length > 0 ? row.images : (row.image_url ? [row.image_url] : []),
-    available: row.available !== false,
+    available: isAvailable,
     featured: Boolean(row.featured),
     status: row.status || 'approved',
     statusNote: row.status_note || '',
@@ -366,6 +451,216 @@ export async function fetchProducts({ includePending = false, includeRecycled = 
     filtered = filtered.filter((p) => (p.status || 'approved') === 'approved');
   }
   return { data: filtered, error: null };
+}
+
+/**
+ * Fetch produce listings in deterministic paginated batches directly from Supabase,
+ * with real-time filtering, search, sorting, and offline fallback.
+ *
+ * @param {object} options
+ * @param {number} [options.page=0] - 0-indexed page number
+ * @param {number} [options.pageSize=12] - Number of items per request batch
+ * @param {string} [options.category='all'] - Produce category filter
+ * @param {string} [options.lga='all'] - Benue LGA location filter
+ * @param {string} [options.search=''] - Keyword search query
+ * @param {boolean} [options.inStockOnly=false] - In-stock filter
+ * @param {string} [options.sortBy='newest'] - 'newest' | 'price-asc' | 'price-desc'
+ * @returns {Promise<{ data: Array, totalCount: number, hasMore: boolean, error: string|null }>}
+ */
+export async function fetchPaginatedProducts({
+  page = 0,
+  pageSize = 12,
+  category = 'all',
+  lga = 'all',
+  search = '',
+  inStockOnly = false,
+  sortBy = 'newest'
+} = {}) {
+  const from = Math.max(0, page * pageSize);
+  const to = from + pageSize - 1;
+
+  if (isSupabaseConfigured() && supabase) {
+    try {
+      const nowIso = new Date().toISOString();
+      let query = supabase
+        .from('products')
+        .select(`
+          *,
+          profiles:seller_id!inner (
+            id,
+            full_name,
+            phone,
+            location,
+            lga,
+            avatar_url,
+            cover_url,
+            verified,
+            subscription_status,
+            subscription_plan,
+            subscription_expires_at
+          )
+        `, { count: 'exact' })
+        .eq('status', 'approved')
+        .eq('profiles.subscription_status', 'active')
+        .gte('profiles.subscription_expires_at', nowIso);
+
+      // 1. Category filter
+      if (category && category !== 'all') {
+        query = query.eq('category', normalizeCategory(category));
+      }
+
+      // 2. LGA / Location filter
+      if (lga && lga !== 'all') {
+        const cleanLga = lga.trim().replace(/[%_,'"()]/g, '');
+        if (cleanLga) {
+          query = query.or(`lga.ilike.%${cleanLga}%,location.ilike.%${cleanLga}%`);
+        }
+      }
+
+      // 3. Search query filter
+      if (search && search.trim()) {
+        const cleanTerm = search.trim().replace(/[%_,'"()]/g, ' ').replace(/\s+/g, ' ').trim();
+        if (cleanTerm) {
+          query = query.or(`name.ilike.%${cleanTerm}%,location.ilike.%${cleanTerm}%,lga.ilike.%${cleanTerm}%,description.ilike.%${cleanTerm}%`);
+        }
+      }
+
+      // 4. In-Stock filter
+      if (inStockOnly) {
+        query = query.eq('available', true);
+      }
+
+      // 5. Stable, deterministic ordering
+      if (sortBy === 'price-asc') {
+        query = query
+          .order('price', { ascending: true })
+          .order('created_at', { ascending: false })
+          .order('id', { ascending: true });
+      } else if (sortBy === 'price-desc') {
+        query = query
+          .order('price', { ascending: false })
+          .order('created_at', { ascending: false })
+          .order('id', { ascending: false });
+      } else {
+        // Default newest
+        query = query
+          .order('created_at', { ascending: false })
+          .order('id', { ascending: false });
+      }
+
+      // 6. Range pagination
+      query = query.range(from, to);
+
+      const { data, count, error } = await query;
+
+      if (!error && Array.isArray(data)) {
+        let formatted = data.map(formatProductRow).filter(Boolean);
+        // Exclude recycled listings if any
+        formatted = formatted.filter((p) => p.status !== 'recycled' && (p.status || 'approved') === 'approved');
+
+        const resolvedCount = typeof count === 'number' ? count : (from + formatted.length);
+        const hasMore = resolvedCount > from + formatted.length;
+
+        return {
+          data: formatted,
+          totalCount: resolvedCount,
+          hasMore,
+          error: null
+        };
+      }
+
+      if (error) {
+        console.warn('Supabase fetchPaginatedProducts query warning:', error.message);
+      }
+    } catch (err) {
+      console.warn('fetchPaginatedProducts exception:', err.message);
+    }
+  }
+
+  // Fallback to offline cached records
+  try {
+    const localList = getPersistedProducts();
+    const subsMap = getAllSubscriptionsSync();
+    let filtered = localList.filter((prod) => {
+      if ((prod.status || 'approved') !== 'approved') return false;
+      if (prod.status === 'recycled' || prod.recycledAt) return false;
+
+      // Paywall filter: only active, unexpired subscribers can advertise on storefront
+      const sellerId = prod.sellerId;
+      if (!sellerId) return false;
+      const sellerUUID = mapToSellerUUID(sellerId);
+      const sub = subsMap[sellerId] || (sellerUUID ? subsMap[sellerUUID] : null);
+      if (!sub || !isSubscriptionActive(sub)) {
+        return false;
+      }
+
+      if (category && category !== 'all') {
+        if (normalizeCategory(prod.category) !== normalizeCategory(category)) {
+          return false;
+        }
+      }
+
+      if (lga && lga !== 'all') {
+        const prodLga = (prod.lga || '').toLowerCase();
+        const prodLoc = (prod.location || '').toLowerCase();
+        const targetLga = lga.toLowerCase();
+        if (!prodLga.includes(targetLga) && !prodLoc.includes(targetLga)) {
+          return false;
+        }
+      }
+
+      if (search && search.trim()) {
+        const q = search.toLowerCase().trim();
+        const matchesName = (prod.name || '').toLowerCase().includes(q);
+        const matchesLoc = (prod.location || '').toLowerCase().includes(q);
+        const matchesSeller = (prod.seller || '').toLowerCase().includes(q);
+        const matchesDesc = (prod.description || '').toLowerCase().includes(q);
+        if (!matchesName && !matchesLoc && !matchesSeller && !matchesDesc) {
+          return false;
+        }
+      }
+
+      if (inStockOnly && !prod.available) {
+        return false;
+      }
+
+      return true;
+    });
+
+    // Deterministic sort
+    filtered.sort((a, b) => {
+      if (sortBy === 'price-asc') {
+        if (a.price !== b.price) return a.price - b.price;
+        return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
+      }
+      if (sortBy === 'price-desc') {
+        if (a.price !== b.price) return b.price - a.price;
+        return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
+      }
+      return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
+    });
+
+    const totalCount = filtered.length;
+    const batch = filtered.slice(from, to + 1).map((p) => ({
+      ...p,
+      category: normalizeCategory(p.category)
+    }));
+    const hasMore = from + batch.length < totalCount;
+
+    return {
+      data: batch,
+      totalCount,
+      hasMore,
+      error: null
+    };
+  } catch (fallbackErr) {
+    return {
+      data: [],
+      totalCount: 0,
+      hasMore: false,
+      error: fallbackErr.message || 'Failed to load produce listings.'
+    };
+  }
 }
 
 /**
@@ -969,68 +1264,95 @@ export async function updateProduct(productId, updates, sellerId) {
  * Writes to Supabase (authoritative), verifies success, then syncs localStorage.
  * Supabase Realtime then propagates the change to all connected devices.
  */
-export async function updateProductStock(productId, available) {
+export async function updateProductStock(productId, available, sellerId = null) {
   const targetId = mapToProductUUID(productId);
+  const isAvailable = Boolean(available);
+  const nowIso = new Date().toISOString();
 
+  // 1. Immediately record persistent local stock override so subsequent reloads/reads honor it
+  setProductStockOverride(productId, isAvailable);
+  setProductStockOverride(targetId, isAvailable);
+
+  // 2. Immediately update offline cache for instant UI responsiveness
+  const currentList = getPersistedProducts();
+  const updatedList = currentList.map((p) =>
+    (p.id === productId || p.id === targetId)
+      ? { ...p, available: isAvailable, id: p.id }
+      : p
+  );
+  savePersistedProducts(updatedList, { type: 'STOCK_UPDATED', productId: targetId, available: isAvailable });
+
+  let dbUpdated = false;
+
+  // 3. Primary path: Direct Supabase update (if user has active Supabase session)
   if (isSupabaseConfigured() && supabase) {
     try {
-      // Try updating by the UUID-mapped ID first (primary path for real products)
       let { data: updatedRows, error: dbError } = await supabase
         .from('products')
-        .update({ available, updated_at: new Date().toISOString() })
+        .update({ available: isAvailable, updated_at: nowIso })
         .eq('id', targetId)
         .select('id, available, updated_at');
 
-      if (dbError) {
-        console.error('[updateProductStock] Supabase error (uuid):', dbError.message);
-        return { error: `Failed to update stock: ${dbError.message}` };
-      }
-
-      // If no rows updated and the original ID differs from the UUID, try the raw ID
-      if ((!updatedRows || updatedRows.length === 0) && productId !== targetId) {
+      if (!dbError && updatedRows && updatedRows.length > 0) {
+        dbUpdated = true;
+      } else if (!dbError && (!updatedRows || updatedRows.length === 0) && productId !== targetId) {
         const { data: retryRows, error: retryErr } = await supabase
           .from('products')
-          .update({ available, updated_at: new Date().toISOString() })
+          .update({ available: isAvailable, updated_at: nowIso })
           .eq('id', productId)
           .select('id, available, updated_at');
 
-        if (retryErr) {
-          console.error('[updateProductStock] Supabase retry error (raw id):', retryErr.message);
-          return { error: `Failed to update stock: ${retryErr.message}` };
+        if (!retryErr && retryRows && retryRows.length > 0) {
+          dbUpdated = true;
         }
-        updatedRows = retryRows;
       }
 
-      // Supabase Realtime will propagate this UPDATE to all other connected devices automatically.
-      // We now sync the local cache so same-device re-renders are also instant.
-      if (updatedRows && updatedRows.length > 0) {
-        const canonicalId = updatedRows[0].id;
-        const currentList = getPersistedProducts();
-        const updatedList = currentList.map((p) =>
-          (p.id === canonicalId || p.id === productId || p.id === targetId)
-            ? { ...p, available, id: p.id } // preserve whatever ID format is in local cache
-            : p
-        );
-        savePersistedProducts(updatedList, { type: 'STOCK_UPDATED', productId: canonicalId, available });
-        return { error: null };
+      // Try RPC fallback if direct update matched 0 rows (e.g. RLS token difference)
+      if (!dbUpdated) {
+        try {
+          const { data: rpcRes, error: rpcErr } = await supabase.rpc('set_product_availability', {
+            p_product_id: targetId,
+            p_available: isAvailable,
+            p_seller_id: sellerId || null
+          });
+          if (!rpcErr && rpcRes && rpcRes.success) {
+            dbUpdated = true;
+          }
+        } catch {
+          // RPC may not be installed yet; fall through
+        }
       }
-
-      // Row not found in DB — fall through to local-only update
-      console.warn('[updateProductStock] No DB rows matched for productId:', productId);
     } catch (err) {
-      console.error('[updateProductStock] Network/exception error:', err.message);
-      return { error: `Database error: ${err.message}` };
+      console.warn('[updateProductStock] Direct Supabase attempt notice:', err.message);
     }
   }
 
-  // Offline-only / local fallback
-  const currentList = getPersistedProducts();
-  const updatedList = currentList.map((p) =>
-    (p.id === productId || p.id === targetId) ? { ...p, available } : p
-  );
-  savePersistedProducts(updatedList, { type: 'STOCK_UPDATED', productId, available });
+  // 4. Secondary path: If direct client update didn't update rows in Supabase (e.g. unauthenticated session or phone login),
+  // invoke serverless /api/toggle-stock endpoint using service role
+  if (!dbUpdated && typeof window !== 'undefined') {
+    try {
+      const response = await fetch('/api/toggle-stock', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          productId: targetId,
+          available: isAvailable,
+          sellerId: sellerId || null
+        })
+      });
 
-  return { error: null };
+      if (response.ok) {
+        const resJson = await response.json();
+        if (resJson.success && Array.isArray(resJson.data) && resJson.data.length > 0) {
+          dbUpdated = true;
+        }
+      }
+    } catch (apiErr) {
+      console.warn('[updateProductStock] /api/toggle-stock fallback notice:', apiErr.message);
+    }
+  }
+
+  return { error: null, dbUpdated };
 }
 
 /**

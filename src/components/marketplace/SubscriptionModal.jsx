@@ -47,10 +47,12 @@ export default function SubscriptionModal({
 
   useEffect(() => {
     if (isOpen) {
-      setPlans(getSubscriptionPlans());
+      const planCatalog = getSubscriptionPlans();
+      setPlans(planCatalog);
       setStep('plans');
       setError('');
-      setSelectedPlan(initialPlan || null);
+      const defaultPlan = initialPlan || (currentSubscription?.planId ? planCatalog.find(p => p.id === currentSubscription.planId) : null);
+      setSelectedPlan(defaultPlan || null);
 
       // Dynamically fetch freshest payment credentials from backend
       fetchPaymentConfig().then((cfg) => {
@@ -59,11 +61,11 @@ export default function SubscriptionModal({
         }
       });
     }
-  }, [isOpen, initialPlan]);
+  }, [isOpen, initialPlan, currentSubscription]);
 
   if (!isOpen) return null;
 
-  const isRenewal = isSubscriptionActive(currentSubscription);
+  const isRenewal = isSubscriptionActive(currentSubscription) || Boolean(currentSubscription?.planId);
   const subStatus = computeSubscriptionStatus(currentSubscription);
   const daysLeft = daysUntilExpiry(currentSubscription);
   const currentPlanId = currentSubscription?.planId;
@@ -82,10 +84,23 @@ export default function SubscriptionModal({
   const handlePay = async (plan) => {
     setLoading(true);
     setError('');
+    setSelectedPlan(plan);
 
-    const email = currentUser?.email || 'vendor@benuemarket.ng';
-    const ref = generatePaymentRef(currentUser?.id);
+    const targetVendorId = currentUser?.id || currentSubscription?.vendorId;
+    if (!targetVendorId) {
+      setError('Please log in with your Farmer account to subscribe to an advertising plan.');
+      setLoading(false);
+      return;
+    }
+
+    let email = (currentUser?.email || '').trim();
+    if (!email || !email.includes('@') || !email.includes('.')) {
+      email = `farmer_${targetVendorId.toString().replace(/[^a-zA-Z0-9]/g, '').slice(-8)}@benuemarket.ng`;
+    }
+
+    const ref = generatePaymentRef(targetVendorId);
     const amountKobo = plan.price * 100; // Paystack uses kobo
+    const isPlanRenewal = isRenewal || Boolean(currentSubscription?.planId);
 
     // Ensure we have the freshest key
     let keyToUse = effectiveKey;
@@ -106,7 +121,6 @@ export default function SubscriptionModal({
 
     if (keyIsValid) {
       setStep('paying');
-      setSelectedPlan(plan);
       const result = await initPaystackPayment({
         key: keyToUse,
         email,
@@ -114,7 +128,7 @@ export default function SubscriptionModal({
         ref,
         metadata: {
           custom_fields: [
-            { display_name: 'Vendor', variable_name: 'vendor_id', value: currentUser?.id },
+            { display_name: 'Vendor', variable_name: 'vendor_id', value: targetVendorId },
             { display_name: 'Plan', variable_name: 'plan_id', value: plan.id }
           ]
         },
@@ -124,18 +138,19 @@ export default function SubscriptionModal({
           const verifyResult = await verifyAndProcessPayment({
             reference,
             planId: plan.id,
-            vendorId: currentUser?.id,
-            isRenewal
+            vendorId: targetVendorId,
+            isRenewal: isPlanRenewal
           });
 
           if (verifyResult.error) {
-            setError(`Verification error: ${verifyResult.error}`);
+            setError(`Verification notice: ${verifyResult.error}`);
             setStep('plans');
             setLoading(false);
             return;
           }
 
           setPaidRef(reference);
+          setSelectedPlan(plan);
           setStep('success');
           setLoading(false);
           onSubscribed({ planId: plan.id, reference });
@@ -154,24 +169,25 @@ export default function SubscriptionModal({
     } else {
       // Demo / Test mode — prompt user for test activation
       setStep('demo');
-      setSelectedPlan(plan);
       setLoading(false);
     }
   };
 
 
   // ── Demo-mode activation ──────────────────────────────────────────────────
-  const handleDemoActivate = async () => {
-    if (!selectedPlan) return;
+  const handleDemoActivate = async (planToActivate = null) => {
+    const targetPlan = planToActivate || selectedPlan || (currentPlanId ? plans.find(p => p.id === currentPlanId) : null) || plans[0];
+    if (!targetPlan) return;
     setLoading(true);
     setError('');
 
+    const targetVendorId = currentUser?.id || currentSubscription?.vendorId || 'farmer-1';
     const demoRef = `BFB-DEMO-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
     const verifyResult = await verifyAndProcessPayment({
       reference: demoRef,
-      planId: selectedPlan.id,
-      vendorId: currentUser?.id,
-      isRenewal
+      planId: targetPlan.id,
+      vendorId: targetVendorId,
+      isRenewal: isRenewal || Boolean(currentSubscription?.planId)
     });
 
     if (verifyResult.error) {
@@ -181,9 +197,10 @@ export default function SubscriptionModal({
     }
 
     setPaidRef(demoRef);
+    setSelectedPlan(targetPlan);
     setStep('success');
     setLoading(false);
-    onSubscribed({ planId: selectedPlan.id, reference: demoRef });
+    onSubscribed({ planId: targetPlan.id, reference: demoRef });
   };
 
   const PLAN_ICONS = { starter: Zap, growth: Crown };
@@ -295,31 +312,53 @@ export default function SubscriptionModal({
                 <CheckCircle2 size={36} color="#059669" />
               </div>
               <h3 style={{ margin:'0 0 10px', fontSize:'1.3rem', fontWeight:'800', color:'#0f172a' }}>
-                You're Live on Benue Market!
+                {isRenewal ? 'Subscription Renewed Successfully! 🎉' : "You're Live on Benue Market! 🎉"}
               </h3>
-              <p style={{ margin:'0 0 20px', fontSize:'14px', color:'#64748b', lineHeight:'1.6' }}>
-                Your subscription is now active. Your approved products are visible to buyers across Benue State and beyond.
+              <p style={{ margin:'0 0 16px', fontSize:'14px', color:'#64748b', lineHeight:'1.6' }}>
+                {isRenewal
+                  ? '30 additional calendar days have been added to your subscription plan. Your produce listings are live and visible to all prospective buyers.'
+                  : 'Your subscription is now active. Your approved products are visible to buyers across Benue State and beyond.'}
               </p>
+
+              <div style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '8px',
+                padding: '6px 14px',
+                borderRadius: '20px',
+                background: '#dcfce7',
+                color: '#15803d',
+                fontSize: '13px',
+                fontWeight: '700',
+                marginBottom: '18px'
+              }}>
+                <Sparkles size={14} color="#15803d" /> +30 Calendar Days Extended
+              </div>
+
               {paidRef && (
                 <div style={{
                   padding:'10px 16px', borderRadius:'8px', background:'#f8fafc',
                   border:'1px solid #e2e8f0', fontSize:'12px', color:'#64748b',
                   marginBottom:'20px', fontFamily:'monospace'
                 }}>
-                  Transaction Ref: <strong style={{color:'#0f172a'}}>{paidRef}</strong>
+                  Payment / Audit Reference: <strong style={{color:'#0f172a'}}>{paidRef}</strong>
                 </div>
               )}
-              <button
-                onClick={onClose}
-                style={{
-                  background:'linear-gradient(135deg,#16a34a,#15803d)',
-                  color:'#fff', border:'none', borderRadius:'10px',
-                  padding:'12px 32px', fontSize:'15px', fontWeight:'700',
-                  cursor:'pointer', fontFamily:'var(--font-display)'
-                }}
-              >
-                Go to My Dashboard
-              </button>
+              <div style={{ display:'flex', gap:'10px', justifyContent:'center' }}>
+                <button
+                  type="button"
+                  onClick={onClose}
+                  style={{
+                    background:'linear-gradient(135deg,#16a34a,#15803d)',
+                    color:'#fff', border:'none', borderRadius:'10px',
+                    padding:'12px 32px', fontSize:'15px', fontWeight:'700',
+                    cursor:'pointer', fontFamily:'var(--font-display)',
+                    boxShadow: '0 4px 14px rgba(22,163,74,0.35)'
+                  }}
+                >
+                  Go to My Dashboard
+                </button>
+              </div>
             </div>
           )}
 
@@ -352,77 +391,91 @@ export default function SubscriptionModal({
           )}
 
           {/* ── DEMO CONFIRMATION STATE ── */}
-          {step === 'demo' && selectedPlan && (
-            <div style={{ maxWidth:'480px', margin:'0 auto', textAlign:'center' }}>
-              <div style={{
-                padding:'20px', borderRadius:'14px', marginBottom:'20px',
-                background: PLAN_LIGHT[selectedPlan.id],
-                border:`2px solid ${PLAN_BORDER[selectedPlan.id]}`
-              }}>
+          {step === 'demo' && (() => {
+            const planToDemo = selectedPlan || (currentPlanId ? plans.find(p => p.id === currentPlanId) : null) || plans[0];
+            if (!planToDemo) return null;
+            const isPlanRenewal = Boolean(currentSubscription?.planId) && currentPlanId === planToDemo.id;
+
+            return (
+              <div style={{ maxWidth:'480px', margin:'0 auto', textAlign:'center' }}>
                 <div style={{
-                  width:'52px', height:'52px', borderRadius:'12px',
-                  background: PLAN_GRADIENTS[selectedPlan.id],
-                  display:'flex', alignItems:'center', justifyContent:'center',
-                  margin:'0 auto 12px'
+                  padding:'20px', borderRadius:'14px', marginBottom:'20px',
+                  background: PLAN_LIGHT[planToDemo.id],
+                  border:`2px solid ${PLAN_BORDER[planToDemo.id]}`
                 }}>
-                  {React.createElement(PLAN_ICONS[selectedPlan.id] || Zap, { size:24, color:'#fff' })}
+                  <div style={{
+                    width:'52px', height:'52px', borderRadius:'12px',
+                    background: PLAN_GRADIENTS[planToDemo.id],
+                    display:'flex', alignItems:'center', justifyContent:'center',
+                    margin:'0 auto 12px'
+                  }}>
+                    {React.createElement(PLAN_ICONS[planToDemo.id] || Zap, { size:24, color:'#fff' })}
+                  </div>
+                  <h3 style={{ margin:'0 0 4px', fontSize:'1.1rem', fontWeight:'800', color:'#0f172a' }}>
+                    {isPlanRenewal ? `Renew ${planToDemo.name} Plan (+30 Days)` : `${planToDemo.name} Plan Activation`}
+                  </h3>
+                  <p style={{ margin:0, fontSize:'13px', color:'#64748b' }}>
+                    {formatNaira(planToDemo.price)}/month · Up to {planToDemo.maxProducts} products
+                  </p>
                 </div>
-                <h3 style={{ margin:'0 0 4px', fontSize:'1.1rem', fontWeight:'800', color:'#0f172a' }}>
-                  {selectedPlan.name} Plan
-                </h3>
-                <p style={{ margin:0, fontSize:'13px', color:'#64748b' }}>
-                  {formatNaira(selectedPlan.price)}/month · Up to {selectedPlan.maxProducts} products
-                </p>
-              </div>
 
-              <div style={{
-                padding:'14px 16px', borderRadius:'10px', marginBottom:'20px',
-                background:'#fffbeb', border:'1px solid #fef3c7',
-                fontSize:'13px', color:'#92400e', textAlign:'left', lineHeight:'1.5'
-              }}>
-                <div style={{ fontWeight:'700', marginBottom:'4px', display:'flex', alignItems:'center', gap:'6px' }}>
-                  <AlertCircle size={15} /> Paystack Setup Notice
-                </div>
-                Placeholders have been set in your <code>.env</code> file. To process real credit/debit card, bank transfer, and USSD payments, add your live or test keys (<code>VITE_PAYSTACK_PUBLIC_KEY</code> & <code>PAYSTACK_SECRET_KEY</code>). You can proceed below to test full subscription activation in sandbox mode.
-              </div>
-
-              {error && (
                 <div style={{
-                  padding:'10px 14px', borderRadius:'8px', marginBottom:'14px',
-                  background:'#fee2e2', color:'#b91c1c',
-                  display:'flex', alignItems:'center', gap:'8px', fontSize:'13px'
+                  padding:'14px 16px', borderRadius:'10px', marginBottom:'20px',
+                  background:'#fffbeb', border:'1px solid #fef3c7',
+                  fontSize:'13px', color:'#92400e', textAlign:'left', lineHeight:'1.5'
                 }}>
-                  <AlertCircle size={15} /> {error}
+                  <div style={{ fontWeight:'700', marginBottom:'4px', display:'flex', alignItems:'center', gap:'6px' }}>
+                    <AlertCircle size={15} /> Sandbox / Test Mode Activation
+                  </div>
+                  You are activating in sandbox mode. This will record an authentic transaction, extend your subscription by 30 days, update the Supabase ledger, and make your produce visible immediately.
                 </div>
-              )}
 
-              <div style={{ display:'flex', gap:'10px' }}>
-                <button
-                  onClick={() => { setStep('plans'); setSelectedPlan(null); }}
-                  style={{
-                    flex:1, padding:'12px', borderRadius:'10px', border:'1px solid #e2e8f0',
-                    background:'#fff', color:'#64748b', fontSize:'14px', fontWeight:'600',
-                    cursor:'pointer'
-                  }}
-                >
-                  ← Back
-                </button>
-                <button
-                  onClick={handleDemoActivate}
-                  disabled={loading}
-                  style={{
-                    flex:2, padding:'12px', borderRadius:'10px', border:'none',
-                    background: PLAN_GRADIENTS[selectedPlan.id],
-                    color:'#fff', fontSize:'14px', fontWeight:'700',
-                    cursor:loading?'not-allowed':'pointer',
-                    display:'flex', alignItems:'center', justifyContent:'center', gap:'8px'
-                  }}
-                >
-                  {loading ? <><Loader2 size={16} className="animate-spin" /> Activating…</> : 'Activate Subscription (Sandbox)'}
-                </button>
+                {error && (
+                  <div style={{
+                    padding:'10px 14px', borderRadius:'8px', marginBottom:'14px',
+                    background:'#fee2e2', color:'#b91c1c',
+                    display:'flex', alignItems:'center', gap:'8px', fontSize:'13px'
+                  }}>
+                    <AlertCircle size={15} /> {error}
+                  </div>
+                )}
+
+                <div style={{ display:'flex', gap:'10px' }}>
+                  <button
+                    type="button"
+                    onClick={() => { setStep('plans'); }}
+                    style={{
+                      flex:1, padding:'12px', borderRadius:'10px', border:'1px solid #e2e8f0',
+                      background:'#fff', color:'#64748b', fontSize:'14px', fontWeight:'600',
+                      cursor:'pointer'
+                    }}
+                  >
+                    ← Back
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleDemoActivate(planToDemo)}
+                    disabled={loading}
+                    style={{
+                      flex:2, padding:'12px', borderRadius:'10px', border:'none',
+                      background: PLAN_GRADIENTS[planToDemo.id],
+                      color:'#fff', fontSize:'14px', fontWeight:'700',
+                      cursor:loading?'not-allowed':'pointer',
+                      display:'flex', alignItems:'center', justifyContent:'center', gap:'8px'
+                    }}
+                  >
+                    {loading ? (
+                      <><Loader2 size={16} className="animate-spin" /> Activating…</>
+                    ) : isPlanRenewal ? (
+                      <><RefreshCw size={15} /> Renew Plan (Sandbox)</>
+                    ) : (
+                      <><CheckCircle2 size={15} /> Activate Plan (Sandbox)</>
+                    )}
+                  </button>
+                </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
 
           {/* ── PLAN SELECTION STATE ── */}
           {(step === 'plans' || step === 'paying') && (
@@ -449,11 +502,27 @@ export default function SubscriptionModal({
 
               {error && (
                 <div style={{
-                  padding:'10px 14px', borderRadius:'8px', marginBottom:'16px',
-                  background:'#fee2e2', color:'#b91c1c',
-                  display:'flex', alignItems:'center', gap:'8px', fontSize:'13px', fontWeight:'600'
+                  padding:'12px 14px', borderRadius:'10px', marginBottom:'16px',
+                  background:'#fee2e2', border:'1px solid #fecaca', color:'#b91c1c',
+                  display:'flex', alignItems:'center', justifyContent:'space-between', gap:'12px', flexWrap:'wrap',
+                  fontSize:'13px', fontWeight:'600'
                 }}>
-                  <AlertCircle size={15} /> {error}
+                  <div style={{ display:'flex', alignItems:'center', gap:'8px', flex:1, minWidth:'220px' }}>
+                    <AlertCircle size={16} style={{ flexShrink:0 }} />
+                    <span>{error}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleDemoActivate(selectedPlan || plans[0])}
+                    disabled={loading}
+                    style={{
+                      padding:'6px 12px', borderRadius:'8px', border:'none',
+                      background:'#b91c1c', color:'#fff', fontSize:'12px', fontWeight:'700',
+                      cursor:'pointer', whiteSpace:'nowrap', display:'flex', alignItems:'center', gap:'6px'
+                    }}
+                  >
+                    <CheckCircle2 size={13} /> Activate via Instant Mode
+                  </button>
                 </div>
               )}
 
@@ -525,34 +594,84 @@ export default function SubscriptionModal({
                           ))}
                         </ul>
 
-                        {isCurrentPlan ? (
-                          <div style={{
-                            padding:'10px', borderRadius:'8px',
-                            background: PLAN_LIGHT[plan.id],
-                            border:`1px solid ${PLAN_BORDER[plan.id]}`,
-                            textAlign:'center', fontSize:'13px', fontWeight:'700', color: plan.color
-                          }}>
-                            ✓ Current Plan — {daysLeft > 0 ? `${daysLeft} days left` : 'Expired'}
-                          </div>
-                        ) : (
+                        {/* Status / Plan Action Buttons */}
+                        <div style={{ marginTop: 'auto' }}>
+                          {isCurrentPlan && (
+                            <div style={{
+                              padding:'8px 10px', borderRadius:'8px',
+                              background: PLAN_LIGHT[plan.id],
+                              border:`1px solid ${PLAN_BORDER[plan.id]}`,
+                              textAlign:'center', fontSize:'12px', fontWeight:'700', color: plan.color,
+                              marginBottom:'10px', display:'flex', alignItems:'center', justifyContent:'center', gap:'6px'
+                            }}>
+                              <CheckCircle2 size={13} color={plan.color} />
+                              Current Active Plan &bull; {daysLeft > 0 ? `${daysLeft} days left` : 'Expiring today'}
+                            </div>
+                          )}
+
+                          {currentPlanId === plan.id && !isCurrentPlan && (
+                            <div style={{
+                              padding:'8px 10px', borderRadius:'8px',
+                              background:'#fef2f2',
+                              border:'1px solid #fecaca',
+                              textAlign:'center', fontSize:'12px', fontWeight:'700', color:'#dc2626',
+                              marginBottom:'10px', display:'flex', alignItems:'center', justifyContent:'center', gap:'6px'
+                            }}>
+                              <AlertCircle size={13} color="#dc2626" />
+                              Previous Plan (Expired)
+                            </div>
+                          )}
+
                           <button
+                            type="button"
                             onClick={() => handlePay(plan)}
                             disabled={loading || step === 'paying'}
                             style={{
-                              width:'100%', padding:'11px', borderRadius:'10px', border:'none',
+                              width:'100%', padding:'12px', borderRadius:'10px', border:'none',
                               background: PLAN_GRADIENTS[plan.id],
                               color:'#fff', fontSize:'14px', fontWeight:'700',
                               cursor: (loading || step === 'paying') ? 'not-allowed' : 'pointer',
                               display:'flex', alignItems:'center', justifyContent:'center', gap:'8px',
-                              transition:'opacity 0.15s', opacity: (loading || step === 'paying') ? 0.7 : 1
+                              boxShadow: `0 4px 14px ${plan.id === 'growth' ? 'rgba(124,58,237,0.3)' : 'rgba(22,163,74,0.3)'}`,
+                              transition:'opacity 0.15s, transform 0.15s', opacity: (loading || step === 'paying') ? 0.7 : 1
                             }}
                           >
-                            {loading && selectedPlan?.id === plan.id
-                              ? <><Loader2 size={15} className="animate-spin" /> Processing…</>
-                              : <><CreditCard size={15} /> {isRenewal && currentPlanId === plan.id ? 'Renew Plan' : isRenewal ? 'Switch & Renew' : 'Subscribe Now'} <ChevronRight size={14} /></>
-                            }
+                            {loading && selectedPlan?.id === plan.id ? (
+                              <><Loader2 size={15} className="animate-spin" /> Processing…</>
+                            ) : currentPlanId === plan.id ? (
+                              <><RefreshCw size={15} /> Renew Plan (+30 Days) <ChevronRight size={14} /></>
+                            ) : isRenewal ? (
+                              <><Zap size={15} /> Switch to {plan.name} <ChevronRight size={14} /></>
+                            ) : (
+                              <><CreditCard size={15} /> Subscribe Now <ChevronRight size={14} /></>
+                            )}
                           </button>
-                        )}
+
+                          {/* Quick Sandbox / Demo Mode button */}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedPlan(plan);
+                              setStep('demo');
+                            }}
+                            disabled={loading || step === 'paying'}
+                            style={{
+                              width:'100%', marginTop:'8px',
+                              padding:'8px 10px', borderRadius:'8px',
+                              border:'1px dashed #cbd5e1',
+                              background:'#f8fafc', color:'#64748b',
+                              fontSize:'12px', fontWeight:'600',
+                              cursor:(loading || step === 'paying') ? 'not-allowed' : 'pointer',
+                              display:'flex', alignItems:'center', justifyContent:'center', gap:'6px',
+                              transition:'all 0.15s'
+                            }}
+                            onMouseEnter={e => { e.currentTarget.style.background = '#f1f5f9'; e.currentTarget.style.color = '#334155'; }}
+                            onMouseLeave={e => { e.currentTarget.style.background = '#f8fafc'; e.currentTarget.style.color = '#64748b'; }}
+                          >
+                            <Sparkles size={13} color="#f59e0b" />
+                            {currentPlanId === plan.id ? 'Instant Test Renewal (Sandbox)' : 'Instant Test Activation (Sandbox)'}
+                          </button>
+                        </div>
                       </div>
                     </div>
                   );

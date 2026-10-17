@@ -1,0 +1,108 @@
+{
+  "id": "benue-farm-bridge-pwa",
+  "name": "Benue Farm Bridge — Connect. Trade. Grow.",
+  "short_name": "Benue Farm",
+  "description": "Direct agricultural marketplace connecting Benue State farmers with buyers nationwide.",
+  "start_url": "/?source=pwa",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": [
+    "window-controls-overlay",
+    "standalone",
+    "minimal-ui",
+    "browser"
+  ],
+  "orientation": "portrait-primary",
+  "background_color": "#064e3b",
+  "theme_color": "#15803d",
+  "lang": "en",
+  "dir": "ltr",
+  "categories": [
+    "shopping",
+    "business",
+    "food",
+    "productivity"
+  ],
+  "icons": [
+    {
+      "src": "/favicon-32x32.png",
+      "sizes": "32x32",
+      "type": "image/png"
+    },
+    {
+      "src": "/pwa-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/pwa-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/pwa-maskable-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/pwa-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Browse Fresh Produce",
+      "short_name": "Browse",
+      "description": "Find yams, rice, soybeans, and citrus from Benue farms",
+      "url": "/#browse",
+      "icons": [
+        {
+          "src": "/pwa-192x192.png",
+          "sizes": "192x192"
+        }
+      ]
+    },
+    {
+      "name": "Sell Farm Produce",
+      "short_name": "Sell",
+      "description": "List your harvest and connect with buyers",
+      "url": "/#sell",
+      "icons": [
+        {
+          "src": "/pwa-192x192.png",
+          "sizes": "192x192"
+        }
+      ]
+    },
+    {
+      "name": "Verified Farmers",
+      "short_name": "Farmers",
+      "description": "Browse registered agricultural producers",
+      "url": "/#farmers",
+      "icons": [
+        {
+          "src": "/pwa-192x192.png",
+          "sizes": "192x192"
+        }
+      ]
+    },
+    {
+      "name": "Saved Bookmarks",
+      "short_name": "Saved",
+      "description": "Quickly access your bookmarked produce",
+      "url": "/#saved",
+      "icons": [
+        {
+          "src": "/pwa-192x192.png",
+          "sizes": "192x192"
+        }
+      ]
+    }
+  ],
+  "prefer_related_applications": false
+}

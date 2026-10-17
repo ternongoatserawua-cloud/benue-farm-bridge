@@ -15,19 +15,33 @@ import {
   ArrowLeft,
   CheckCircle2,
   Loader2,
-  Send
+  Send,
+  ShieldAlert,
+  Clock,
+  Headphones,
+  ArrowRight
 } from 'lucide-react';
 import Modal from './Modal.jsx';
 import Button from './Button.jsx';
+import TermsModal from './TermsModal.jsx';
 import { BENUE_LGAS } from '../../data/locations.js';
 import { signUpUser, signInUser, requestPasswordReset } from '../../services/authService.js';
+import {
+  getLoginLockoutStatus,
+  recordFailedLoginAttempt,
+  recordSuccessfulLogin,
+  formatLockoutDurationText,
+  calculateLockoutDurationSeconds,
+  BASE_LOCKOUT_SECONDS
+} from '../../utils/authRateLimiter.js';
 
 export default function AuthModal({
   isOpen,
   onClose,
   initialMode = 'login', // 'login' | 'register' | 'forgot'
   initialRole = 'buyer',
-  onSuccess = () => {}
+  onSuccess = () => {},
+  onNavigate = () => {}
 }) {
   const [mode, setMode] = useState(initialMode);
   const [role, setRole] = useState(initialRole);
@@ -42,6 +56,10 @@ export default function AuthModal({
   const [loading, setLoading] = useState(false);
   const [authError, setAuthError] = useState('');
   const [resetSent, setResetSent] = useState(false); // success state after sending reset
+  const [lockoutStatus, setLockoutStatus] = useState(() => getLoginLockoutStatus(''));
+  const [agreedToTerms, setAgreedToTerms] = useState(false);
+  const [termsModalOpen, setTermsModalOpen] = useState(false);
+  const [termsErrorHighlight, setTermsErrorHighlight] = useState(false);
 
   useEffect(() => {
     if (isOpen) {
@@ -49,13 +67,40 @@ export default function AuthModal({
       setRole(initialRole);
       setAuthError('');
       setResetSent(false);
+      setAgreedToTerms(false);
+      setTermsErrorHighlight(false);
+      setLockoutStatus(getLoginLockoutStatus(formData.email));
     }
   }, [isOpen, initialMode, initialRole]);
+
+  // Update lockout status when user enters email/phone in login mode
+  useEffect(() => {
+    if (mode === 'login' && formData.email) {
+      setLockoutStatus(getLoginLockoutStatus(formData.email));
+    }
+  }, [formData.email, mode]);
+
+  // Active countdown timer when locked
+  useEffect(() => {
+    let timer = null;
+    if (lockoutStatus.isLocked && isOpen) {
+      timer = setInterval(() => {
+        const fresh = getLoginLockoutStatus(formData.email);
+        setLockoutStatus(fresh);
+      }, 1000);
+    }
+    return () => {
+      if (timer) clearInterval(timer);
+    };
+  }, [lockoutStatus.isLocked, isOpen, formData.email]);
 
   const switchMode = (newMode) => {
     setMode(newMode);
     setAuthError('');
     setResetSent(false);
+    if (newMode === 'login') {
+      setLockoutStatus(getLoginLockoutStatus(formData.email));
+    }
   };
 
   // ── Sign In / Register handler ────────────────────────────────────────────
@@ -67,27 +112,61 @@ export default function AuthModal({
     const rawInput = (formData.email || '').trim();
 
     if (mode === 'register') {
+      if (!agreedToTerms) {
+        setLoading(false);
+        setAuthError('You must read and agree to the Terms & Conditions before creating an account.');
+        setTermsErrorHighlight(true);
+        return;
+      }
+
       const { user, error } = await signUpUser({
         email: rawInput,
         password: formData.password,
         name: formData.name,
         phone: (formData.phone && !formData.phone.includes('@')) ? formData.phone : '',
         role,
-        lga: formData.lga
+        lga: formData.lga,
+        agreedToTerms: true
       });
 
       setLoading(false);
       if (error) { setAuthError(error); return; }
       if (user) { onSuccess(user); onClose(); }
     } else {
+      // Check if user is currently locked out
+      const currentLock = getLoginLockoutStatus(rawInput);
+      if (currentLock.isLocked) {
+        setLockoutStatus(currentLock);
+        setLoading(false);
+        return;
+      }
+
       const { user, error } = await signInUser({
         email: rawInput,
         password: formData.password
       });
 
       setLoading(false);
-      if (error) { setAuthError(error); return; }
-      if (user) { onSuccess(user); onClose(); }
+
+      if (error) {
+        // Record failed attempt
+        const updatedStatus = recordFailedLoginAttempt(rawInput);
+        setLockoutStatus(updatedStatus);
+
+        if (!updatedStatus.isLocked) {
+          setAuthError(error);
+        } else {
+          setAuthError('');
+        }
+        return;
+      }
+
+      if (user) {
+        recordSuccessfulLogin(rawInput);
+        setLockoutStatus(getLoginLockoutStatus(rawInput));
+        onSuccess(user);
+        onClose();
+      }
     }
   };
 
@@ -289,19 +368,119 @@ export default function AuthModal({
         {/* ── Login / Register mode ── */}
         {mode !== 'forgot' && (
           <>
-            {/* Error Alert */}
-            {authError && (
-              <div className="auth-error-alert" style={{
-                display: 'flex', alignItems: 'center', gap: '8px',
-                padding: '10px 14px', marginBottom: '14px',
-                backgroundColor: 'var(--color-danger-light, #fee2e2)',
-                color: 'var(--color-danger, #b91c1c)',
-                borderRadius: '6px', fontSize: '13px', fontWeight: '600'
-              }}>
-                <AlertCircle size={16} style={{ flexShrink: 0 }} />
-                <span>{authError}</span>
+            {/* Account Lockout Notice & Action Options (Shown when 3 incorrect attempts reached) */}
+            {mode === 'login' && lockoutStatus.isLocked ? (
+              <div className="auth-lockout-card animate-scale-in" role="alert">
+                <div className="auth-lockout-header">
+                  <div className="auth-lockout-icon-wrap" aria-hidden="true">
+                    <ShieldAlert size={22} />
+                  </div>
+                  <div>
+                    <h3 className="auth-lockout-title">Account Access Temporarily Restricted</h3>
+                    <p className="auth-lockout-desc">
+                      Incorrect login details detected. For your account security, sign-in attempts have been paused for{' '}
+                      <strong>{lockoutStatus.durationText || formatLockoutDurationText(lockoutStatus.currentLockoutSeconds || BASE_LOCKOUT_SECONDS)}</strong>{' '}
+                      (Attempt #{lockoutStatus.attemptsMade}).
+                    </p>
+                    <p style={{ margin: '6px 0 0', fontSize: '11.5px', color: '#f87171', lineHeight: '1.45' }}>
+                      ⚠ Cooldown doubles (×2) on every consecutive failed attempt. Next failure will lock for{' '}
+                      <strong>{lockoutStatus.nextDurationText || formatLockoutDurationText(lockoutStatus.nextLockoutSeconds || calculateLockoutDurationSeconds((lockoutStatus.attemptsMade || 1) + 1))}</strong>.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="auth-lockout-timer-box">
+                  <div className="auth-lockout-timer-label">
+                    <Clock size={14} /> Security Cooldown Active
+                  </div>
+                  <div className="auth-lockout-clock" aria-live="polite">
+                    {lockoutStatus.formattedCountdown}
+                  </div>
+                </div>
+
+                <div className="auth-lockout-actions-title">
+                  Choose an option below to regain access:
+                </div>
+
+                <div className="auth-lockout-options-grid">
+                  {/* Option 1: Reset Password */}
+                  <button
+                    type="button"
+                    className="auth-lockout-option-btn btn-reset"
+                    onClick={() => {
+                      switchMode('forgot');
+                    }}
+                  >
+                    <div className="auth-lockout-opt-icon">
+                      <KeyRound size={18} />
+                    </div>
+                    <div className="auth-lockout-opt-content">
+                      <span className="auth-lockout-opt-title">Reset Your Password (Fastest)</span>
+                      <span className="auth-lockout-opt-sub">
+                        Create a new password immediately without waiting for the cooldown.
+                      </span>
+                    </div>
+                    <ArrowRight size={16} className="auth-lockout-opt-arrow" />
+                  </button>
+
+                  {/* Option 2: Contact Support Desk */}
+                  <button
+                    type="button"
+                    className="auth-lockout-option-btn btn-support"
+                    onClick={() => {
+                      onClose();
+                      onNavigate('contact', {
+                        topic: 'account_security',
+                        reason: 'account_lockout',
+                        email: (formData.email || '').trim()
+                      });
+                    }}
+                  >
+                    <div className="auth-lockout-opt-icon">
+                      <Headphones size={18} />
+                    </div>
+                    <div className="auth-lockout-opt-content">
+                      <span className="auth-lockout-opt-title">Contact Support &amp; Help Desk</span>
+                      <span className="auth-lockout-opt-sub">
+                        Connect with Benue support on WhatsApp, hotline or submit a ticket.
+                      </span>
+                    </div>
+                    <ArrowRight size={16} className="auth-lockout-opt-arrow" />
+                  </button>
+                </div>
+
+                <div style={{ marginTop: '12px', textAlign: 'center' }}>
+                  <span style={{ fontSize: '11.5px', color: '#94a3b8' }}>
+                    Sign-in will automatically unlock when the timer reaches 00:00
+                  </span>
+                </div>
               </div>
-            )}
+            ) : (
+              <>
+                {/* Error Alert with Attempt Countdown Warning */}
+                {authError && (
+                  <div className="auth-error-alert" style={{
+                    display: 'flex', alignItems: 'flex-start', gap: '8px',
+                    padding: '10px 14px', marginBottom: '14px',
+                    backgroundColor: 'var(--color-danger-light, #fee2e2)',
+                    color: 'var(--color-danger, #b91c1c)',
+                    borderRadius: '6px', fontSize: '13px', fontWeight: '600'
+                  }}>
+                    <AlertCircle size={16} style={{ flexShrink: 0, marginTop: '2px' }} />
+                    <div style={{ flex: 1 }}>
+                      <div>{authError}</div>
+                      {mode === 'login' && lockoutStatus.attemptsMade > 0 && (
+                        <div className="auth-attempt-warning-badge">
+                          <ShieldAlert size={12} />
+                          <span>
+                            Next incorrect attempt will lock your account for{' '}
+                            {lockoutStatus.nextDurationText || formatLockoutDurationText(lockoutStatus.nextLockoutSeconds || calculateLockoutDurationSeconds((lockoutStatus.attemptsMade || 0) + 1))}.
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
 
             {/* Role Picker – register only */}
             {mode === 'register' && (
@@ -456,6 +635,38 @@ export default function AuthModal({
                 )}
               </div>
 
+              {/* Terms & Conditions Agreement Checkbox (Mandatory before registration) */}
+              {mode === 'register' && (
+                <div className={`auth-terms-group ${agreedToTerms ? 'has-checked' : ''} ${termsErrorHighlight ? 'has-error' : ''}`}>
+                  <label className="auth-terms-label" htmlFor="auth-agree-terms">
+                    <input
+                      id="auth-agree-terms"
+                      type="checkbox"
+                      checked={agreedToTerms}
+                      onChange={(e) => {
+                        setAgreedToTerms(e.target.checked);
+                        if (e.target.checked) setTermsErrorHighlight(false);
+                      }}
+                      className="auth-terms-checkbox"
+                    />
+                    <span className="auth-terms-text">
+                      I have read, understood, and agree to the{' '}
+                      <button
+                        type="button"
+                        className="auth-terms-btn-link"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          setTermsModalOpen(true);
+                        }}
+                      >
+                        Benue Farm Bridge Terms &amp; Conditions
+                      </button>
+                      {' '}governing honest produce weights, authentic photos, and fair trade. *
+                    </span>
+                  </label>
+                </div>
+              )}
+
               <div className="auth-form-submit-wrap">
                 <Button
                   type="submit"
@@ -470,7 +681,26 @@ export default function AuthModal({
             </form>
           </>
         )}
-      </div>
-    </Modal>
+      </>
+    )}
+  </div>
+
+  {/* Quick Terms & Conditions Modal Overlay */}
+  <TermsModal
+    isOpen={termsModalOpen}
+    onClose={() => setTermsModalOpen(false)}
+    onAccept={() => {
+      setAgreedToTerms(true);
+      setTermsErrorHighlight(false);
+    }}
+    onOpenFullPage={() => {
+      setTermsModalOpen(false);
+      onClose();
+      if (typeof onNavigate === 'function') {
+        onNavigate('terms');
+      }
+    }}
+  />
+</Modal>
   );
 }
